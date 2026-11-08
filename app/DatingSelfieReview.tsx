@@ -14,6 +14,13 @@ type CheckRequest = {
   selfie_url: string | null;
 };
 
+type QueuedRequest = Omit<CheckRequest, "status" | "selfie_url">;
+
+type VerificationState = {
+  user_id: string;
+  status: CheckRequest["status"];
+};
+
 const GOLD = "#f5b301";
 
 export default function DatingSelfieReview() {
@@ -32,12 +39,39 @@ export default function DatingSelfieReview() {
       return;
     }
 
-    const queue = (data ?? []) as Omit<CheckRequest, "selfie_url">[];
+    const queue = (data ?? []) as QueuedRequest[];
+    if (!queue.length) {
+      setRequests([]);
+      setActiveRequest(null);
+      return;
+    }
+
+    const { data: states, error: statesError } = await supabase
+      .from("dating_verifications")
+      .select("user_id, status")
+      .in("user_id", queue.map((request) => request.user_id));
+    if (statesError) {
+      setError(`Could not load selfie-review statuses: ${statesError.message}`);
+      return;
+    }
+    const statusByUser = new Map(
+      ((states ?? []) as VerificationState[]).map((state) => [state.user_id, state.status])
+    );
+
     const signedRequests: CheckRequest[] = [];
     for (const request of queue) {
-      if (request.status !== "requested") {
-        signedRequests.push({ ...request, selfie_url: null });
+      const status = statusByUser.get(request.user_id);
+      if (status !== "requested" && status !== "selfie_checked" && status !== "rejected") {
+        setError("Could not determine a selfie-review status. Refresh the queue and try again.");
+        return;
+      }
+      if (status !== "requested") {
+        signedRequests.push({ ...request, status, selfie_url: null });
         continue;
+      }
+      if (!request.selfie_path) {
+        setError("A pending selfie request is missing its private photo path. Confirm the latest Supabase migration was applied.");
+        return;
       }
       const { data: signedUrl, error: signedUrlError } = await supabase.storage
         .from("dating-selfies")
@@ -46,7 +80,7 @@ export default function DatingSelfieReview() {
         setError(`Could not open a private selfie for review: ${signedUrlError.message}`);
         return;
       }
-      signedRequests.push({ ...request, selfie_url: signedUrl.signedUrl });
+      signedRequests.push({ ...request, status, selfie_url: signedUrl.signedUrl });
     }
 
     setRequests(signedRequests);
