@@ -6,6 +6,10 @@ import PostActions from "./PostActions";
 import ProfileView from "./ProfileView";
 import ReportButton from "./ReportButton";
 import AdminPanel from "./AdminPanel";
+import Welcome from "./Welcome";
+import TopBar from "./TopBar";
+import Composer from "./Composer";
+import BottomBar from "./BottomBar";
 import type { Session } from "@supabase/supabase-js";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
@@ -23,19 +27,12 @@ type Post = {
   profiles: {
     username: string | null;
     display_name: string | null;
+    avatar_url: string | null;
     is_admin: boolean | null;
   } | null;
 };
 
-type Tab = "home" | "reels" | "messages" | "dating" | "profile";
-
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "home", label: "Home", icon: "🏠" },
-  { id: "reels", label: "Reels", icon: "🎬" },
-  { id: "messages", label: "Messages", icon: "💬" },
-  { id: "dating", label: "Dating", icon: "🔥" },
-  { id: "profile", label: "Profile", icon: "👤" },
-];
+type Tab = "home" | "reels" | "messages" | "dating" | "alerts" | "search" | "profile";
 
 type Embed =
   | { kind: "iframe"; src: string; height: number }
@@ -108,35 +105,6 @@ function LinkPreview({ url }: { url: string }) {
   );
 }
 
-function LogoMark({ size = 36 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-      <rect x="2" y="2" width="60" height="60" rx="14" fill={GOLD} />
-      <path d="M12 14h40a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H30l-12 10v-10h-6a4 4 0 0 1-4-4V18a4 4 0 0 1 4-4z"
-        fill="#0a0a0a" />
-      <rect x="18" y="26" width="4" height="8" rx="2" fill={GOLD} />
-      <rect x="26" y="20" width="4" height="20" rx="2" fill={GOLD} />
-      <rect x="34" y="23" width="4" height="14" rx="2" fill={GOLD} />
-      <rect x="42" y="27" width="4" height="6" rx="2" fill={RED} />
-    </svg>
-  );
-}
-
-function Logo({ big = false }: { big?: boolean }) {
-  const textSize = big ? "text-4xl" : "text-2xl";
-  return (
-    <div className="flex items-center gap-2">
-      <LogoMark size={big ? 52 : 36} />
-      <span className={anton.className + " uppercase leading-none tracking-wider " + textSize}>
-        Open<span style={{ color: GOLD }}>Voice</span>
-      </span>
-    </div>
-  );
-}
-
-const inputCls =
-  "w-full rounded bg-[#1c1c1c] border border-[#333] p-2 text-white placeholder-gray-500 outline-none focus:border-[#f5b301]";
-
 function ComingSoon({ title, text }: { title: string; text: string }) {
   return (
     <div className="rounded-lg border border-[#2a2a2a] bg-[#141414] p-8 text-center">
@@ -153,8 +121,10 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myName, setMyName] = useState("");
+  const [myAvatar, setMyAvatar] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("home");
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
@@ -164,11 +134,13 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [fileKey, setFileKey] = useState(0);
   const [posting, setPosting] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [menuId, setMenuId] = useState<number | null>(null);
 
   async function loadPosts() {
     const { data } = await supabase
       .from("posts")
-      .select("id, user_id, content, image_url, link_url, created_at, profiles(username, display_name, is_admin)")
+      .select("id, user_id, content, image_url, link_url, created_at, profiles(username, display_name, avatar_url, is_admin)")
       .order("created_at", { ascending: false });
     setPosts((data as unknown as Post[]) ?? []);
   }
@@ -177,21 +149,24 @@ export default function Home() {
     if (!s) {
       setIsAdmin(false);
       setMyName("");
+      setMyAvatar(null);
       return;
     }
     const { data } = await supabase
       .from("profiles")
-      .select("is_admin, display_name, username")
+      .select("is_admin, display_name, username, avatar_url")
       .eq("id", s.user.id)
       .single();
     setIsAdmin(!!data?.is_admin);
     setMyName(data?.display_name || data?.username || "");
+    setMyAvatar(data?.avatar_url ?? null);
   }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       loadMe(data.session);
+      setReady(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
@@ -212,14 +187,23 @@ export default function Home() {
     setMsg(error ? error.message : "");
   }
 
-  async function createPost() {
-    if (!session || posting) return;
+  async function createPost(): Promise<boolean> {
+    if (!session || posting) return false;
     let link = linkUrl.trim();
     if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
-    if (link && !parseEmbed(link)) return setMsg("That link doesn't look valid.");
-    if (!text.trim() && !link && !file) return;
-    if (file && !file.type.startsWith("image/")) return setMsg("Only image files can be uploaded.");
-    if (file && file.size > 5 * 1024 * 1024) return setMsg("Image must be under 5 MB.");
+    if (link && !parseEmbed(link)) {
+      setMsg("That link doesn't look valid.");
+      return false;
+    }
+    if (!text.trim() && !link && !file) return false;
+    if (file && !file.type.startsWith("image/")) {
+      setMsg("Only image files can be uploaded.");
+      return false;
+    }
+    if (file && file.size > 5 * 1024 * 1024) {
+      setMsg("Image must be under 5 MB.");
+      return false;
+    }
 
     setPosting(true);
     setMsg("");
@@ -231,7 +215,8 @@ export default function Home() {
       const { error: upErr } = await supabase.storage.from("post-images").upload(filePath, file);
       if (upErr) {
         setPosting(false);
-        return setMsg(upErr.message);
+        setMsg(upErr.message);
+        return false;
       }
       imageUrl = supabase.storage.from("post-images").getPublicUrl(filePath).data.publicUrl;
     }
@@ -243,168 +228,188 @@ export default function Home() {
       link_url: link || null,
     });
     setPosting(false);
-    if (error) return setMsg(error.message);
+    if (error) {
+      setMsg(error.message);
+      return false;
+    }
     setText("");
     setLinkUrl("");
     setFile(null);
     setFileKey((k) => k + 1);
     loadPosts();
+    return true;
   }
 
   async function deletePost(id: number) {
     const { error } = await supabase.from("posts").delete().eq("id", id);
+    setMenuId(null);
     if (error) return setMsg(error.message);
     loadPosts();
   }
 
+  function go(nextTab: Tab) {
+    setTab(nextTab);
+    setViewingId(null);
+    setMenuId(null);
+  }
+
+  function openProfile(userId: string) {
+    setViewingId(userId);
+    setTab("profile");
+    setMenuId(null);
+  }
+
   const initial = (myName || session?.user.email || "?").charAt(0).toUpperCase();
+
+  if (!ready) return <div className="min-h-screen bg-[#0a0a0a]" />;
+  if (!session) {
+    return (
+      <Welcome
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        msg={msg}
+        onLogIn={logIn}
+        onSignUp={signUp}
+      />
+    );
+  }
 
   return (
     <div
-      className="min-h-screen bg-[#0a0a0a] bg-cover bg-fixed bg-center pb-24 text-white md:pb-8"
+      className="min-h-screen bg-[#0a0a0a] bg-cover bg-fixed bg-center pb-28 text-white"
       style={{
         backgroundImage:
           "linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.88)), url('/bg.png')",
       }}
     >
-      <header className="sticky top-0 z-20 border-b border-[#2a2a2a] bg-[#0a0a0a]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
-          <Logo />
-          <nav className="hidden items-center gap-1 md:flex">
-            {TABS.map((t) => (
-              <button key={t.id} onClick={() => { setTab(t.id); setViewingId(null); }}
-                className={`${anton.className} rounded px-3 py-2 text-sm uppercase tracking-wider ${
-                  tab === t.id ? "text-black" : "text-gray-300 hover:bg-[#1c1c1c]"
-                }`}
-                style={tab === t.id ? { background: GOLD } : undefined}>
-                {t.icon} {t.label}
-              </button>
-            ))}
-          </nav>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-black"
-            style={{ background: session ? GOLD : "#333" }}>
-            {session ? initial : "?"}
-          </div>
-        </div>
-      </header>
+      <TopBar
+        onCreate={() => {
+          go("home");
+          setComposerOpen(true);
+        }}
+        onSearch={() => go("search")}
+        onMessages={() => go("messages")}
+      />
 
-      <main className="mx-auto max-w-xl space-y-4 p-4">
+      <main className="mx-auto max-w-xl space-y-3 p-3">
         {tab === "home" && (
           <>
-            {!session ? (
-              <div className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-5">
-                <Logo big />
-                <p className={`${anton.className} text-xl uppercase tracking-wide`} style={{ color: RED }}>
-                  Speak your truth. No censors.
-                </p>
-                <input className={inputCls} placeholder="Email" value={email}
-                  onChange={(e) => setEmail(e.target.value)} />
-                <input className={inputCls} placeholder="Password" type="password" value={password}
-                  onChange={(e) => setPassword(e.target.value)} />
-                <div className="flex gap-2">
-                  <button onClick={logIn}
-                    className={`${anton.className} rounded px-5 py-2 uppercase tracking-wider text-black`}
-                    style={{ background: GOLD }}>Log in</button>
-                  <button onClick={signUp}
-                    className={`${anton.className} rounded border border-[#555] px-5 py-2 uppercase tracking-wider`}>
-                    Sign up</button>
-                </div>
-                {msg && <p className="text-sm text-red-500">{msg}</p>}
-              </div>
-            ) : (
-              <div className="space-y-2 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
-                <textarea className={inputCls} rows={3} placeholder="What's on your mind?"
-                  value={text} onChange={(e) => setText(e.target.value)} />
-                <input className={inputCls}
-                  placeholder="Paste a link (YouTube, Spotify, SoundCloud, TikTok, Amazon Music...)"
-                  value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} />
-                <input key={fileKey} type="file" accept="image/*" className="text-sm text-gray-400"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-                <div>
-                  <button onClick={createPost} disabled={posting}
-                    className={`${anton.className} rounded px-6 py-2 uppercase tracking-wider text-black disabled:opacity-50`}
-                    style={{ background: GOLD }}>
-                    {posting ? "Posting..." : "Post"}
-                  </button>
-                </div>
-                {msg && <p className="text-sm text-red-500">{msg}</p>}
-              </div>
-            )}
+            <Composer
+              avatarUrl={myAvatar}
+              initial={initial}
+              open={composerOpen}
+              setOpen={setComposerOpen}
+              text={text}
+              setText={setText}
+              linkUrl={linkUrl}
+              setLinkUrl={setLinkUrl}
+              setFile={setFile}
+              fileKey={fileKey}
+              posting={posting}
+              msg={msg}
+              onPost={createPost}
+            />
 
-            {posts.map((p) => (
-              <article key={p.id} className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full font-bold text-black"
-                      style={{ background: GOLD }}>
-                      {(p.profiles?.display_name || p.profiles?.username || "A").charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="font-semibold">
-                        <button
-                          onClick={() => { setViewingId(p.user_id); setTab("profile"); }}
-                          className="hover:underline"
-                        >
-                          {p.profiles?.display_name || p.profiles?.username || "Anonymous"}
-                        </button>
-                        {p.profiles?.is_admin && (
-                          <span className="ml-2 rounded px-2 py-0.5 text-xs text-white" style={{ background: RED }}>ADMIN</span>
-                        )}
-                      </p>
-                      <p className="text-xs text-gray-500">{new Date(p.created_at).toLocaleString()}</p>
+            {posts.map((p) => {
+              const own = session.user.id === p.user_id;
+              const name = p.profiles?.display_name || p.profiles?.username || "Anonymous";
+              return (
+                <article key={p.id} className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
+                  <div className="flex items-start justify-between">
+                    <button onClick={() => openProfile(p.user_id)} className="flex items-center gap-3 text-left">
+                      {p.profiles?.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.profiles.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full font-bold text-black"
+                          style={{ background: GOLD }}>
+                          {name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <p className="font-semibold">
+                          {name}
+                          {p.profiles?.is_admin && (
+                            <span className="ml-2 rounded px-2 py-0.5 text-xs text-white" style={{ background: RED }}>
+                              ADMIN
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-gray-500">{new Date(p.created_at).toLocaleString()}</p>
+                      </div>
+                    </button>
+
+                    <div className="relative">
+                      <button
+                        onClick={() => setMenuId(menuId === p.id ? null : p.id)}
+                        aria-label="More"
+                        className="px-2 text-xl leading-none text-gray-400 hover:text-white"
+                      >
+                        •••
+                      </button>
+                      {menuId === p.id && (
+                        <div className="absolute right-0 z-10 mt-1 w-48 space-y-3 rounded border border-[#333] bg-[#1c1c1c] p-3">
+                          {(isAdmin || own) && (
+                            <button onClick={() => deletePost(p.id)} className="block text-sm text-red-500">
+                              Delete post
+                            </button>
+                          )}
+                          {!own && <ReportButton postId={p.id} session={session} />}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  {session && (isAdmin || session.user.id === p.user_id) && (
-                    <button onClick={() => deletePost(p.id)} className="text-sm text-red-500">Delete</button>
+
+                  {p.content && <p className="whitespace-pre-wrap break-words">{p.content}</p>}
+                  {p.image_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.image_url} alt="" className="w-full rounded" />
                   )}
-                </div>
-                {p.content && <p className="whitespace-pre-wrap break-words">{p.content}</p>}
-                {p.image_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.image_url} alt="" className="w-full rounded" />
-                )}
-                {p.link_url && <LinkPreview url={p.link_url} />}
-                <PostActions postId={p.id} session={session} isAdmin={isAdmin} />
-                {session && session.user.id !== p.user_id && <ReportButton postId={p.id} session={session} />}
-              </article>
-            ))}
+                  {p.link_url && <LinkPreview url={p.link_url} />}
+                  <PostActions postId={p.id} session={session} isAdmin={isAdmin} />
+                </article>
+              );
+            })}
           </>
         )}
 
         {tab === "reels" && <ComingSoon title="Reels" text="Short videos from the streets." />}
         {tab === "messages" && <ComingSoon title="Messages" text="Talk straight, one on one." />}
         {tab === "dating" && <ComingSoon title="Dating" text="Real people only. 18+ and verified." />}
+        {tab === "alerts" && <ComingSoon title="Alerts" text="Likes, comments, and who viewed you." />}
+        {tab === "search" && <ComingSoon title="Search" text="Find people and posts." />}
 
         {tab === "profile" && (session || viewingId) && (
           <ProfileView
             key={viewingId ?? "me"}
-            profileId={(viewingId ?? session?.user.id) as string}
+            profileId={viewingId ?? session.user.id}
             session={session}
-            onBack={viewingId ? () => { setViewingId(null); setTab("home"); } : undefined}
+            onBack={viewingId ? () => go("home") : undefined}
           />
         )}
-        {tab === "profile" && session && isAdmin && !viewingId && (
-          <AdminPanel isAdmin={isAdmin} />
-        )}
-        {tab === "profile" && !session && !viewingId && (
-          <div className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-6 text-center">
-            <p className="text-gray-400">Log in from the Home tab to see your profile.</p>
-          </div>
+        {tab === "profile" && (
+          <>
+            {isAdmin && !viewingId && <AdminPanel isAdmin={isAdmin} />}
+            {!viewingId && (
+              <button
+                onClick={() => supabase.auth.signOut()}
+                className={anton.className + " w-full rounded border border-[#555] py-3 uppercase tracking-wider"}
+              >
+                Log out
+              </button>
+            )}
+          </>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-20 grid grid-cols-5 border-t border-[#2a2a2a] bg-[#0a0a0a] pb-2 md:hidden">
-        {TABS.map((t) => (
-          <button key={t.id} onClick={() => { setTab(t.id); setViewingId(null); }}
-            className={`${anton.className} flex flex-col items-center gap-1 py-2 text-[11px] uppercase tracking-wider ${
-              tab === t.id ? "" : "text-gray-400"
-            }`}
-            style={tab === t.id ? { color: GOLD } : undefined}>
-            <span className="text-xl">{t.icon}</span>
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <BottomBar
+        tab={tab === "messages" || tab === "search" ? "" : tab}
+        onSelect={(id) => go(id as Tab)}
+        avatarUrl={myAvatar}
+        initial={initial}
+      />
     </div>
   );
 }
