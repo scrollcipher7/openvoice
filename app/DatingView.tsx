@@ -678,12 +678,12 @@ export default function DatingView({
             ) : verificationStatus !== "selfie_checked" ? (
               <div className="mt-3 space-y-3">
                 <label className="block text-sm text-gray-300">
-                  Choose or take a selfie photo
+                  Take a selfie or choose a photo from your gallery
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
-                    capture="user"
                     disabled={!savedDateOfBirth || selfieBusy}
+                    onClick={() => window.sessionStorage.setItem("openvoice-active-tab", "dating")}
                     onChange={(event) => setSelfieFile(event.currentTarget.files?.[0] ?? null)}
                     className="mt-1 block w-full text-sm file:mr-2 file:rounded file:border-0 file:bg-[#333] file:px-3 file:py-2 file:text-white disabled:opacity-50"
                   />
