@@ -10,6 +10,12 @@ type CheckRequest = {
   username: string | null;
   avatar_url: string | null;
   requested_at: string;
+  status: "requested" | "in_progress";
+};
+
+type VerificationState = {
+  user_id: string;
+  status: "requested" | "in_progress";
 };
 
 const GOLD = "#f5b301";
@@ -21,16 +27,69 @@ export default function DatingSelfieReview() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const markConnected = useCallback(() => setConnected(true), []);
 
   const loadRequests = useCallback(async () => {
+    setError("");
     const { data, error: resultError } = await supabase.rpc("get_dating_verification_requests");
     if (resultError) {
       setError(resultError.message);
       return;
     }
-    setRequests((data ?? []) as CheckRequest[]);
-  }, []);
+
+    const queue = (data ?? []) as Omit<CheckRequest, "status">[];
+    if (!queue.length) {
+      setRequests([]);
+      setActiveRequest(null);
+      setConnected(false);
+      return;
+    }
+
+    const { data: states, error: statesError } = await supabase
+      .from("dating_verifications")
+      .select("user_id, status")
+      .in("user_id", queue.map((request) => request.user_id));
+    if (statesError) {
+      setError(`Could not refresh selfie-check statuses: ${statesError.message}`);
+      return;
+    }
+
+    const statusByUser = new Map(
+      ((states ?? []) as VerificationState[]).map((state) => [state.user_id, state.status])
+    );
+    const refreshedQueue: CheckRequest[] = [];
+    for (const request of queue) {
+      const status = statusByUser.get(request.user_id);
+      if (status !== "requested" && status !== "in_progress") {
+        setError("Could not determine the current status for a selfie-check request. Please refresh again.");
+        return;
+      }
+      refreshedQueue.push({ ...request, status });
+    }
+
+    setRequests(refreshedQueue);
+    if (activeRequest) {
+      const updatedRequest = refreshedQueue.find((request) => request.user_id === activeRequest.user_id);
+      if (!updatedRequest || updatedRequest.status !== "in_progress") {
+        setActiveRequest(null);
+        setConnected(false);
+      } else {
+        setActiveRequest(updatedRequest);
+      }
+    }
+  }, [activeRequest]);
+
+  async function refreshRequests() {
+    setRefreshing(true);
+    try {
+      await loadRequests();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not refresh selfie-check requests.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
     const initialTimer = window.setTimeout(() => void loadRequests(), 0);
@@ -45,14 +104,16 @@ export default function DatingSelfieReview() {
     setError("");
     setNotice("");
     setBusy(true);
-    const { error: resultError } = await supabase.rpc("start_dating_selfie_check", {
-      target_user: request.user_id,
-    });
-    if (resultError) {
-      setError(resultError.message);
-      setBusy(false);
-      await loadRequests();
-      return;
+    if (request.status === "requested") {
+      const { error: resultError } = await supabase.rpc("start_dating_selfie_check", {
+        target_user: request.user_id,
+      });
+      if (resultError) {
+        setError(resultError.message);
+        setBusy(false);
+        await refreshRequests();
+        return;
+      }
     }
     setActiveRequest(request);
     setConnected(false);
@@ -103,7 +164,14 @@ export default function DatingSelfieReview() {
     <section className="space-y-3 rounded-lg border border-[#665000] bg-[#141414] p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="font-bold uppercase tracking-wide" style={{ color: GOLD }}>Dating selfie checks</h3>
-        <button type="button" onClick={() => void loadRequests()} className="rounded border border-[#555] px-3 py-1 text-sm">Refresh</button>
+        <button
+          type="button"
+          onClick={() => void refreshRequests()}
+          disabled={refreshing}
+          className="rounded border border-[#555] px-3 py-1 text-sm disabled:opacity-50"
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
       <p className="text-sm text-gray-400">
         Review a live camera feed and compare it with the account photo when available. OpenVoice does not record or store video, but cannot prevent capture outside the app. This is a human selfie check, not face recognition, identity verification, or proof of age.
@@ -153,7 +221,7 @@ export default function DatingSelfieReview() {
                 <p className="text-xs text-gray-500">Requested {new Date(request.requested_at).toLocaleString()}</p>
               </div>
               <button type="button" disabled={busy} onClick={() => void startCheck(request)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-50" style={{ background: GOLD }}>
-                {busy ? "Starting…" : "Start live check"}
+                {busy ? "Starting…" : request.status === "in_progress" ? "Resume live check" : "Start live check"}
               </button>
             </div>
           ))}
