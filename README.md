@@ -28,13 +28,18 @@ Dating profiles can include up to three regular photos, one meme, and one AI-gen
 
 Mutual matches get conversation starter prompts in their private match chat and can start audio or video calls with each other there. The recipient must have that match chat open to receive a call. Call signaling is restricted to the two verified match members. Calls remain separate from selfie review and use TURN for media.
 
+## Reels
+
+Reels support short video uploads, camera recording, likes, reports, and two remix layouts: side-by-side Duet and original-then-reaction. Videos are private in Supabase Storage; the feed uses temporary signed URLs. Every new Reel stays hidden until an admin reviews and approves it. Reports go to the admin queue. If an admin confirms nudity, they can remove the Reel and ban that creator from Reels. This is manual moderation, not automatic detection, and the ban applies to Reels rather than the whole OpenVoice account.
+
 Before using it:
 
 1. Apply `supabase/migrations/20261108090000_dating_mvp.sql` to the Supabase project.
 2. Apply `supabase/migrations/20261108113000_dating_selfie_photo_review.sql` to the Supabase project.
 3. Apply `supabase/migrations/20261108115500_admin_dating_auto_approval.sql` to the Supabase project. Admin accounts still need to save a date of birth and self-attest that they are 18 or older; their selfie review is automatically approved.
-4. In Supabase Realtime settings, disable **Allow public access** so private match-call signaling channels are protected by the migration's policies.
-5. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
+4. Apply `supabase/migrations/20261108121500_reels_and_remixes.sql` to enable Reels and private video storage.
+5. In Supabase Realtime settings, disable **Allow public access** so private match-call signaling channels are protected by the migration's policies.
+6. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
 
 ```env
 DATING_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp

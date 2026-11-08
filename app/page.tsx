@@ -11,6 +11,7 @@ import TopBar from "./TopBar";
 import Composer from "./Composer";
 import BottomBar from "./BottomBar";
 import DatingView from "./DatingView";
+import ReelsView from "./ReelsView";
 import type { Session } from "@supabase/supabase-js";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
@@ -419,7 +420,7 @@ export default function Home() {
           </>
         )}
 
-        {tab === "reels" && <ComingSoon title="Reels" text="Short videos from the streets." />}
+        {tab === "reels" && <ReelsView session={session} isAdmin={isAdmin} />}
         {tab === "messages" && <ComingSoon title="Messages" text="Talk straight, one on one." />}
         {tab === "dating" && <DatingView session={session} onOpenProfile={openProfile} />}
         {tab === "alerts" && <ComingSoon title="Alerts" text="Likes, comments, and who viewed you." />}
