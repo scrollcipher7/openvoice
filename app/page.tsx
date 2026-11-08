@@ -35,6 +35,16 @@ type Post = {
 
 type Tab = "home" | "reels" | "messages" | "dating" | "alerts" | "search" | "profile";
 
+function isTab(value: string | null): value is Tab {
+  return value === "home"
+    || value === "reels"
+    || value === "messages"
+    || value === "dating"
+    || value === "alerts"
+    || value === "search"
+    || value === "profile";
+}
+
 type Embed =
   | { kind: "iframe"; src: string; height: number }
   | { kind: "link"; href: string; host: string };
@@ -123,7 +133,11 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [myName, setMyName] = useState("");
   const [myAvatar, setMyAvatar] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "home";
+    const savedTab = window.sessionStorage.getItem("openvoice-active-tab");
+    return isTab(savedTab) ? savedTab : "home";
+  });
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [returnTab, setReturnTab] = useState<Tab>("home");
   const [ready, setReady] = useState(false);
@@ -274,6 +288,7 @@ export default function Home() {
 
   function go(nextTab: Tab) {
     setTab(nextTab);
+    window.sessionStorage.setItem("openvoice-active-tab", nextTab);
     setViewingId(null);
     setMenuId(null);
   }
@@ -282,6 +297,7 @@ export default function Home() {
     setReturnTab(tab);
     setViewingId(userId);
     setTab("profile");
+    window.sessionStorage.setItem("openvoice-active-tab", "profile");
     setMenuId(null);
   }
 
