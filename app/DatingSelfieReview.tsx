@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useLanguage } from "./LanguageContext";
 
 type CheckRequest = {
   user_id: string;
@@ -24,6 +25,7 @@ type VerificationState = {
 const GOLD = "#f5b301";
 
 export default function DatingSelfieReview() {
+  const { language, t } = useLanguage();
   const [requests, setRequests] = useState<CheckRequest[]>([]);
   const [activeRequest, setActiveRequest] = useState<CheckRequest | null>(null);
   const [error, setError] = useState("");
@@ -62,7 +64,7 @@ export default function DatingSelfieReview() {
     for (const request of queue) {
       const status = statusByUser.get(request.user_id);
       if (status !== "requested" && status !== "selfie_checked" && status !== "rejected") {
-        setError("Could not determine a selfie-review status. Refresh the queue and try again.");
+        setError(t("Could not determine a selfie-review status. Refresh the queue and try again."));
         return;
       }
       if (status !== "requested") {
@@ -70,7 +72,7 @@ export default function DatingSelfieReview() {
         continue;
       }
       if (!request.selfie_path) {
-        setError("A pending selfie request is missing its private photo path. Confirm the latest Supabase migration was applied.");
+        setError(t("A pending selfie request is missing its private photo path. Confirm the latest Supabase migration was applied."));
         return;
       }
       const { data: signedUrl, error: signedUrlError } = await supabase.storage
@@ -89,7 +91,7 @@ export default function DatingSelfieReview() {
         request.user_id === activeRequest.user_id && request.status === "requested");
       setActiveRequest(updatedRequest ?? null);
     }
-  }, [activeRequest]);
+  }, [activeRequest, t]);
 
   async function deleteReviewedSelfie(request: CheckRequest): Promise<string | null> {
     const { error: deleteError } = await supabase.storage.from("dating-selfies").remove([request.selfie_path]);
@@ -121,7 +123,7 @@ export default function DatingSelfieReview() {
     try {
       await loadRequests();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not refresh selfie-review requests.");
+      setError(cause instanceof Error ? t(cause.message) : t("Could not refresh selfie-review requests."));
     } finally {
       setRefreshing(false);
     }
@@ -152,10 +154,10 @@ export default function DatingSelfieReview() {
     }
 
     const cleanupError = await deleteReviewedSelfie(activeRequest);
-    if (cleanupError) setError(`The review was saved, but selfie cleanup is still pending: ${cleanupError}`);
-    else setNotice(approved
+    if (cleanupError) setError(`${t("The review was saved, but selfie cleanup is still pending:")} ${t(cleanupError)}`);
+    else setNotice(t(approved
       ? "Selfie photo checked. This does not verify the person's identity or age."
-      : "Selfie photo review rejected. The uploaded selfie was deleted.");
+      : "Selfie photo review rejected. The uploaded selfie was deleted."));
     setActiveRequest(null);
     setBusy(false);
     await loadRequests();
@@ -167,8 +169,8 @@ export default function DatingSelfieReview() {
     setNotice("");
     setBusy(true);
     const cleanupError = await deleteReviewedSelfie(request);
-    if (cleanupError) setError(`Selfie cleanup is still pending: ${cleanupError}`);
-    else setNotice("The private selfie was deleted.");
+    if (cleanupError) setError(`${t("Selfie cleanup is still pending:")} ${t(cleanupError)}`);
+    else setNotice(t("The private selfie was deleted."));
     setBusy(false);
     if (!cleanupError) await loadRequests();
   }
@@ -176,55 +178,55 @@ export default function DatingSelfieReview() {
   return (
     <section className="space-y-3 rounded-lg border border-[#665000] bg-[#141414] p-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-bold uppercase tracking-wide" style={{ color: GOLD }}>Dating selfie checks</h3>
+        <h3 className="font-bold uppercase tracking-wide" style={{ color: GOLD }}>{t("Dating selfie checks")}</h3>
         <button
           type="button"
           onClick={() => void refreshRequests()}
           disabled={refreshing}
           className="rounded border border-[#555] px-3 py-1 text-sm disabled:opacity-50"
         >
-          {refreshing ? "Refreshing…" : "Refresh"}
+          {refreshing ? t("Refreshing…") : t("Refresh")}
         </button>
       </div>
       <p className="text-sm text-gray-400">
-        Compare the submitted private selfie photo with the account photo when available. This is a manual visual check, not face recognition, identity verification, or proof of age.
+        {t("Compare the submitted private selfie photo with the account photo when available. This is a manual visual check, not face recognition, identity verification, or proof of age.")}
       </p>
-      {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-      {notice && <p role="status" className="text-sm text-yellow-100">{notice}</p>}
+      {error && <p role="alert" className="text-sm text-red-300">{t(error)}</p>}
+      {notice && <p role="status" className="text-sm text-yellow-100">{t(notice)}</p>}
 
       {activeRequest ? (
         <div className="space-y-3 rounded border border-[#444] p-3">
           <div className="flex flex-wrap items-start gap-4">
             <div>
-              <p className="mb-2 text-sm text-gray-300">Submitted selfie</p>
+              <p className="mb-2 text-sm text-gray-300">{t("Submitted selfie")}</p>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={activeRequest.selfie_url ?? ""} alt="Private submitted selfie" className="h-52 w-40 rounded object-cover" />
+              <img src={activeRequest.selfie_url ?? ""} alt={t("Private submitted selfie")} className="h-52 w-40 rounded object-cover" />
             </div>
             <div>
-              <p className="mb-2 text-sm text-gray-300">OpenVoice profile photo</p>
+              <p className="mb-2 text-sm text-gray-300">{t("OpenVoice profile photo")}</p>
               {activeRequest.avatar_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={activeRequest.avatar_url} alt="Current account profile photo" className="h-52 w-40 rounded object-cover" />
+                <img src={activeRequest.avatar_url} alt={t("Current account profile photo")} className="h-52 w-40 rounded object-cover" />
               ) : (
-                <p className="flex h-52 w-40 items-center justify-center rounded bg-[#222] p-3 text-center text-sm text-gray-500">No profile photo available</p>
+                <p className="flex h-52 w-40 items-center justify-center rounded bg-[#222] p-3 text-center text-sm text-gray-500">{t("No profile photo available")}</p>
               )}
             </div>
             <div className="min-w-48">
               <p className="font-semibold">{activeRequest.display_name}</p>
               {activeRequest.username && <p className="text-sm text-gray-400">@{activeRequest.username}</p>}
-              <p className="mt-2 text-xs text-gray-500">Requested {new Date(activeRequest.requested_at).toLocaleString()}</p>
-              <p className="mt-2 text-xs text-gray-500">The photo URL expires after five minutes. Approving does not verify identity or age.</p>
+              <p className="mt-2 text-xs text-gray-500">{t("Requested")} {new Date(activeRequest.requested_at).toLocaleString(language === "es" ? "es-US" : "en-US")}</p>
+              <p className="mt-2 text-xs text-gray-500">{t("The photo URL expires after five minutes. Approving does not verify identity or age.")}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" disabled={busy} onClick={() => void reviewCheck(true)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-40" style={{ background: GOLD }}>
-              {busy ? "Saving…" : "Approve selfie check"}
+              {busy ? t("Saving…") : t("Approve selfie check")}
             </button>
             <button type="button" disabled={busy} onClick={() => void reviewCheck(false)} className="rounded border border-red-500 px-4 py-2 text-red-300 disabled:opacity-40">
-              Reject selfie check
+              {t("Reject selfie check")}
             </button>
             <button type="button" disabled={busy} onClick={() => setActiveRequest(null)} className="rounded border border-[#555] px-4 py-2 text-sm disabled:opacity-40">
-              Return to queue
+              {t("Return to queue")}
             </button>
           </div>
         </div>
@@ -237,22 +239,22 @@ export default function DatingSelfieReview() {
                 {request.username && <p className="text-sm text-gray-400">@{request.username}</p>}
                 <p className="text-xs text-gray-500">
                   {request.status === "requested"
-                    ? `Requested ${new Date(request.requested_at).toLocaleString()}`
-                    : `Review saved; private photo cleanup pending (${request.status.replaceAll("_", " ")}).`}
+                    ? `${t("Requested")} ${new Date(request.requested_at).toLocaleString(language === "es" ? "es-US" : "en-US")}`
+                    : `${t("Review saved; private photo cleanup pending")} (${t(request.status.replaceAll("_", " "))}).`}
                 </p>
               </div>
               {request.status === "requested" ? (
                 <button type="button" disabled={busy} onClick={() => setActiveRequest(request)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-50" style={{ background: GOLD }}>
-                  Review selfie
+                  {t("Review selfie")}
                 </button>
               ) : (
                 <button type="button" disabled={busy} onClick={() => void retryCleanup(request)} className="rounded border border-[#555] px-4 py-2 text-sm disabled:opacity-50">
-                  {busy ? "Cleaning up…" : "Retry private photo cleanup"}
+                  {busy ? t("Cleaning up…") : t("Retry private photo cleanup")}
                 </button>
               )}
             </div>
           ))}
-          {!requests.length && <p className="text-sm text-gray-400">No pending requests.</p>}
+          {!requests.length && <p className="text-sm text-gray-400">{t("No pending requests.")}</p>}
         </div>
       )}
     </section>

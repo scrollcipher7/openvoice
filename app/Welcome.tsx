@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Anton } from "next/font/google";
+import { LanguageSwitch, useLanguage } from "./LanguageContext";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
 
@@ -11,7 +12,7 @@ const RULES = [
   "You must be 18 or older.",
   "Speak your truth. Opinions are never censored.",
   "No nudity, no sexual content, and no links to adult sites.",
-  "No threats, violence, or illegal content.",
+  "No threats, calls for violence, graphic gore, or illegal content. Documentary footage of fights and police activity is allowed.",
   "No harassment or doxxing.",
   "One real person, one account. No fake profiles.",
   "Dating is for verified, US-ID members only.",
@@ -55,6 +56,7 @@ export default function Welcome({
   onGoogleSignIn: () => void;
 }) {
   const [agreed, setAgreed] = useState(false);
+  const { t } = useLanguage();
 
   return (
     <div
@@ -79,6 +81,9 @@ export default function Welcome({
         .ov-rise2 { animation: ov-rise 0.6s ease 1s both; }
       `}</style>
 
+      <div className="mx-auto mb-4 flex max-w-md justify-end">
+        <LanguageSwitch />
+      </div>
       <div className="mx-auto max-w-md space-y-6">
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="ov-pop">
@@ -88,37 +93,37 @@ export default function Welcome({
             Open<span style={{ color: GOLD }}>Voice</span>
           </h1>
           <p className={anton.className + " ov-rise text-xl uppercase tracking-wide"} style={{ color: RED }}>
-            Speak your truth. No censors.
+            {t("Speak your truth. No censors.")}
           </p>
         </div>
 
         <div className="ov-rise space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414]/95 p-5">
-          <input className={inputCls} placeholder="Email" value={email}
+          <input className={inputCls} placeholder={t("Email")} value={email}
             onChange={(e) => setEmail(e.target.value)} />
-          <input className={inputCls} placeholder="Password" type="password" value={password}
+          <input className={inputCls} placeholder={t("Password")} type="password" value={password}
             onChange={(e) => setPassword(e.target.value)} />
 
           <button onClick={onLogIn}
             className={anton.className + " w-full rounded py-3 text-lg uppercase tracking-wider text-black"}
             style={{ background: GOLD }}>
-            Log in
+            {t("Log in")}
           </button>
 
           <label className="flex items-start gap-2 text-sm text-gray-300">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)}
               className="mt-1" />
-            <span>I am 18 or older and I agree to the OpenVoice rules below.</span>
+            <span>{t("I am 18 or older and I agree to the OpenVoice rules below.")}</span>
           </label>
 
           <button onClick={onSignUp} disabled={!agreed}
             className={anton.className + " w-full rounded border py-3 text-lg uppercase tracking-wider disabled:opacity-40"}
             style={{ borderColor: GOLD, color: GOLD }}>
-            Create account
+            {t("Create account")}
           </button>
 
           <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-gray-500">
             <div className="h-px flex-1 bg-[#2a2a2a]" />
-            Or continue with
+            {t("Or continue with")}
             <div className="h-px flex-1 bg-[#2a2a2a]" />
           </div>
 
@@ -128,21 +133,21 @@ export default function Welcome({
             disabled={!agreed}
             className="w-full rounded border border-[#444] bg-white py-3 font-semibold text-[#222] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Continue with Google
+            {t("Continue with Google")}
           </button>
 
-          {!agreed && <p className="text-center text-xs text-gray-500">Check the box above to create an account or continue with Google.</p>}
+          {!agreed && <p className="text-center text-xs text-gray-500">{t("Check the box above to create an account or continue with Google.")}</p>}
 
-          {msg && <p className="text-sm text-red-500">{msg}</p>}
+          {msg && <p className="text-sm text-red-500">{t(msg)}</p>}
         </div>
 
         <div className="ov-rise2 rounded-lg border border-[#2a2a2a] bg-[#141414]/95 p-5">
           <h2 className={anton.className + " mb-3 text-xl uppercase tracking-wider"} style={{ color: GOLD }}>
-            House rules
+            {t("House rules")}
           </h2>
           <ol className="list-decimal space-y-2 pl-5 text-sm text-gray-200">
             {RULES.map((r) => (
-              <li key={r}>{r}</li>
+              <li key={r}>{t(r)}</li>
             ))}
           </ol>
         </div>

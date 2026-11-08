@@ -1,5 +1,6 @@
 "use client";
 import { Anton } from "next/font/google";
+import { useLanguage } from "./LanguageContext";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
 
@@ -18,12 +19,15 @@ export default function BottomBar({
   onSelect,
   avatarUrl,
   initial,
+  alertCount = 0,
 }: {
   tab: string;
   onSelect: (id: string) => void;
   avatarUrl: string | null;
   initial: string;
+  alertCount?: number;
 }) {
+  const { t } = useLanguage();
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-20 border-t border-[#2a2a2a] bg-[#0a0a0a]/95 pb-2 backdrop-blur">
       <div className="mx-auto grid max-w-xl grid-cols-5">
@@ -38,10 +42,17 @@ export default function BottomBar({
               style={{ color }}
             >
               {it.icon ? (
-                <svg width="26" height="26" viewBox="0 0 24 24" fill={active ? GOLD : "none"}
-                  stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round">
-                  <path d={it.icon} />
-                </svg>
+                <span className="relative">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill={active ? GOLD : "none"}
+                    stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round">
+                    <path d={it.icon} />
+                  </svg>
+                  {it.id === "alerts" && alertCount > 0 && (
+                    <span className="absolute -right-2 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white">
+                      {alertCount > 99 ? "99+" : alertCount}
+                    </span>
+                  )}
+                </span>
               ) : avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={avatarUrl} alt="" className="h-[26px] w-[26px] rounded-full object-cover"
@@ -54,7 +65,7 @@ export default function BottomBar({
                   {initial}
                 </span>
               )}
-              {it.label}
+              {t(it.label)}
             </button>
           );
         })}

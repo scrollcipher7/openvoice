@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useLanguage } from "./LanguageContext";
 
 type CallMode = "audio" | "video";
 type CallPhase = "idle" | "calling" | "incoming" | "connecting" | "connected";
@@ -15,10 +16,13 @@ type CallSignal =
 export default function DatingMatchCall({
   matchId,
   otherName,
+  callType = "dating",
 }: {
   matchId: string;
   otherName: string;
+  callType?: "dating" | "friend";
 }) {
+  const { t } = useLanguage();
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -48,10 +52,10 @@ export default function DatingMatchCall({
 
   const sendSignal = useCallback(async (signal: CallSignal) => {
     const channel = channelRef.current;
-    if (!channel) throw new Error("The private call room is not connected.");
+    if (!channel) throw new Error(t("The private call room is not connected."));
     const result = await channel.send({ type: "broadcast", event: "signal", payload: signal });
-    if (result !== "ok") throw new Error("Could not send call signal. Check your connection and try again.");
-  }, []);
+    if (result !== "ok") throw new Error(t("Could not send call signal. Check your connection and try again."));
+  }, [t]);
 
   const stopLocalMedia = useCallback(() => {
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -93,7 +97,7 @@ export default function DatingMatchCall({
         }
         if (signal.type === "decline") {
           resetCall();
-          setError(`${otherName} declined the call.`);
+          setError(`${otherName} ${t("declined the call.")}`);
           return;
         }
         if (signal.type === "hangup") {
@@ -115,7 +119,7 @@ export default function DatingMatchCall({
         }
       } catch (cause) {
         if (active) {
-          setError(cause instanceof Error ? cause.message : "The call could not be connected.");
+          setError(cause instanceof Error ? t(cause.message) : t("The call could not be connected."));
           resetCall();
         }
       }
@@ -126,21 +130,24 @@ export default function DatingMatchCall({
         const { data: authData, error: authError } = await supabase.auth.getSession();
         if (authError) throw new Error(authError.message);
         if (!authData.session) throw new Error("Sign in again before starting a call.");
+        const roomTopic = `${callType === "friend" ? "friend-call" : "dating-call"}:${matchId}`;
         const response = await fetch("/api/dating/turn-credentials", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${authData.session.access_token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ targetMatchId: matchId }),
+          body: JSON.stringify(callType === "friend"
+            ? { targetFriendConversationId: matchId }
+            : { targetMatchId: matchId }),
         });
         const result = await response.json() as { iceServers?: RTCIceServer[]; error?: string };
-        if (!response.ok) throw new Error(result.error || "Calls are not available for this match.");
+        if (!response.ok) throw new Error(result.error || "Calls are not available for this conversation.");
         if (!result.iceServers?.length) throw new Error("The relay service returned no video servers.");
         if (!active) return;
         iceServersRef.current = result.iceServers;
 
-        const channel = supabase.channel(`dating-call:${matchId}`, { config: { private: true } });
+        const channel = supabase.channel(roomTopic, { config: { private: true } });
         channelRef.current = channel;
         cleanup = () => {
           peerRef.current?.close();
@@ -162,14 +169,14 @@ export default function DatingMatchCall({
             } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
               setChannelReady(false);
               setLoading(false);
-              setError("Could not join this match’s private call room.");
+              setError(t("Could not join this private call room."));
             }
           });
 
       } catch (cause) {
         if (active) {
           setLoading(false);
-          setError(cause instanceof Error ? cause.message : "Calls could not be prepared.");
+          setError(cause instanceof Error ? t(cause.message) : t("Calls could not be prepared."));
         }
       }
     }
@@ -179,18 +186,18 @@ export default function DatingMatchCall({
       active = false;
       cleanup?.();
     };
-  }, [matchId, otherName, resetCall, sendSignal, setCallMode, setCallPhase, stopLocalMedia]);
+  }, [callType, matchId, otherName, resetCall, sendSignal, setCallMode, setCallPhase, stopLocalMedia, t]);
 
   useEffect(() => {
     if (phase !== "calling") return;
     const timer = window.setTimeout(() => {
       if (phaseRef.current === "calling") {
         resetCall();
-        setError("No answer. You can try calling again.");
+        setError(t("No answer. You can try calling again."));
       }
     }, 45000);
     return () => window.clearTimeout(timer);
-  }, [phase, resetCall]);
+  }, [phase, resetCall, t]);
 
   function createPeer(): RTCPeerConnection {
     const peer = new RTCPeerConnection({
@@ -215,7 +222,7 @@ export default function DatingMatchCall({
     };
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === "failed") {
-        setError("The call connection failed. Check your network and try again.");
+        setError(t("The call connection failed. Check your network and try again."));
         resetCall();
       } else if (peer.connectionState === "disconnected" || peer.connectionState === "closed") {
         resetCall();
@@ -226,7 +233,7 @@ export default function DatingMatchCall({
 
   async function getMedia(callMode: CallMode): Promise<MediaStream> {
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Calls require a supported browser and a secure HTTPS connection.");
+      throw new Error(t("Calls require a supported browser and a secure HTTPS connection."));
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
@@ -249,7 +256,7 @@ export default function DatingMatchCall({
       await peer.setLocalDescription(offer);
       await sendSignal({ type: "offer", mode: callMode, description: offer });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start the call.");
+      setError(cause instanceof Error ? t(cause.message) : t("Could not start the call."));
       resetCall();
     }
   }
@@ -270,7 +277,7 @@ export default function DatingMatchCall({
       await peer.setLocalDescription(answer);
       await sendSignal({ type: "answer", description: answer });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not accept the call.");
+      setError(cause instanceof Error ? t(cause.message) : t("Could not accept the call."));
       resetCall();
     }
   }
@@ -279,7 +286,7 @@ export default function DatingMatchCall({
     try {
       await sendSignal({ type: "decline" });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not decline the call cleanly.");
+      setError(cause instanceof Error ? t(cause.message) : t("Could not decline the call cleanly."));
     } finally {
       resetCall();
     }
@@ -289,39 +296,39 @@ export default function DatingMatchCall({
     try {
       await sendSignal({ type: "hangup" });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not end the call cleanly.");
+      setError(cause instanceof Error ? t(cause.message) : t("Could not end the call cleanly."));
     } finally {
       resetCall();
     }
   }
 
   return (
-    <section className="space-y-3 rounded border border-[#333] p-3" aria-label="Audio and video calls">
+    <section className="space-y-3 rounded border border-[#333] p-3" aria-label={t("Audio and video calls")}>
       <div>
-        <h4 className="font-semibold">Call {otherName}</h4>
-        <p className="text-xs text-gray-400">The other person must have this match chat open to receive a call. Calls are not recorded or stored by OpenVoice, but could be captured outside the app.</p>
+        <h4 className="font-semibold">{t("Call")} {otherName}</h4>
+        <p className="text-xs text-gray-400">{t("The other person must have this chat open to receive a call. Calls are not recorded or stored by OpenVoice, but could be captured outside the app.")}</p>
       </div>
-      {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-      {loading && <p className="text-sm text-gray-400">Connecting to private call service…</p>}
-      {!loading && !channelReady && <p className="text-sm text-gray-400">Calls are unavailable right now.</p>}
+      {error && <p role="alert" className="text-sm text-red-300">{t(error)}</p>}
+      {loading && <p className="text-sm text-gray-400">{t("Connecting to private call service…")}</p>}
+      {!loading && !channelReady && <p className="text-sm text-gray-400">{t("Calls are unavailable right now.")}</p>}
 
       {phase === "idle" && channelReady && (
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void startCall("audio")} className="rounded border border-[#555] px-3 py-2 text-sm">Audio call</button>
-          <button type="button" onClick={() => void startCall("video")} className="rounded px-3 py-2 text-sm font-semibold text-black" style={{ background: "#f5b301" }}>Video call</button>
+          <button type="button" onClick={() => void startCall("audio")} className="rounded border border-[#555] px-3 py-2 text-sm">{t("Audio call")}</button>
+          <button type="button" onClick={() => void startCall("video")} className="rounded px-3 py-2 text-sm font-semibold text-black" style={{ background: "#f5b301" }}>{t("Video call")}</button>
         </div>
       )}
       {phase === "incoming" && (
         <div className="flex flex-wrap items-center gap-2">
-          <p className="mr-2 text-sm">{mode === "video" ? "Incoming video call" : "Incoming audio call"} from {otherName}</p>
-          <button type="button" onClick={() => void acceptCall()} className="rounded px-3 py-2 text-sm font-semibold text-black" style={{ background: "#f5b301" }}>Accept</button>
-          <button type="button" onClick={() => void declineCall()} className="rounded border border-red-500 px-3 py-2 text-sm text-red-300">Decline</button>
+          <p className="mr-2 text-sm">{t(mode === "video" ? "Incoming video call" : "Incoming audio call")} {t("from")} {otherName}</p>
+          <button type="button" onClick={() => void acceptCall()} className="rounded px-3 py-2 text-sm font-semibold text-black" style={{ background: "#f5b301" }}>{t("Accept")}</button>
+          <button type="button" onClick={() => void declineCall()} className="rounded border border-red-500 px-3 py-2 text-sm text-red-300">{t("Decline")}</button>
         </div>
       )}
       {(phase === "calling" || phase === "connecting" || phase === "connected") && (
         <div className="space-y-2">
           <p className="text-sm text-gray-300">
-            {phase === "calling" ? `Calling ${otherName}…` : phase === "connecting" ? "Connecting call…" : mode === "video" ? "Video call connected." : "Audio call connected."}
+            {phase === "calling" ? `${t("Calling")} ${otherName}…` : phase === "connecting" ? t("Connecting call…") : t(mode === "video" ? "Video call connected." : "Audio call connected.")}
           </p>
           {mode === "video" && (
             <div className="grid gap-2 sm:grid-cols-2">
@@ -330,7 +337,7 @@ export default function DatingMatchCall({
             </div>
           )}
           <audio ref={remoteAudio} autoPlay />
-          <button type="button" onClick={() => void endCall()} className="rounded border border-red-500 px-3 py-2 text-sm text-red-300">End call</button>
+          <button type="button" onClick={() => void endCall()} className="rounded border border-red-500 px-3 py-2 text-sm text-red-300">{t("End call")}</button>
         </div>
       )}
     </section>

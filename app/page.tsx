@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Anton } from "next/font/google";
 import { supabase } from "@/lib/supabase";
 import PostActions from "./PostActions";
@@ -12,6 +12,10 @@ import Composer from "./Composer";
 import BottomBar from "./BottomBar";
 import DatingView from "./DatingView";
 import ReelsView from "./ReelsView";
+import FriendsMessenger from "./FriendsMessenger";
+import AlertsView from "./AlertsView";
+import StoriesView from "./StoriesView";
+import { useLanguage } from "./LanguageContext";
 import type { Session } from "@supabase/supabase-js";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
@@ -118,18 +122,20 @@ function LinkPreview({ url }: { url: string }) {
 }
 
 function ComingSoon({ title, text }: { title: string; text: string }) {
+  const { t } = useLanguage();
   return (
     <div className="rounded-lg border border-[#2a2a2a] bg-[#141414] p-8 text-center">
-      <h2 className={`${anton.className} text-3xl uppercase tracking-wider`} style={{ color: GOLD }}>{title}</h2>
-      <p className="mt-2 text-gray-400">{text}</p>
+      <h2 className={`${anton.className} text-3xl uppercase tracking-wider`} style={{ color: GOLD }}>{t(title)}</h2>
+      <p className="mt-2 text-gray-400">{t(text)}</p>
       <p className="mt-4 inline-block rounded px-3 py-1 text-xs uppercase tracking-widest text-white" style={{ background: RED }}>
-        Coming soon
+        {t("Coming soon")}
       </p>
     </div>
   );
 }
 
 export default function Home() {
+  const { language, t } = useLanguage();
   const [session, setSession] = useState<Session | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myName, setMyName] = useState("");
@@ -141,6 +147,9 @@ export default function Home() {
   });
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [returnTab, setReturnTab] = useState<Tab>("home");
+  const [messageUserId, setMessageUserId] = useState<string | null>(null);
+  const [pendingPostId, setPendingPostId] = useState<number | null>(null);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -152,6 +161,7 @@ export default function Home() {
   const [fileKey, setFileKey] = useState(0);
   const [posting, setPosting] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [storyComposerOpen, setStoryComposerOpen] = useState(false);
   const [menuId, setMenuId] = useState<number | null>(null);
 
   async function loadPosts() {
@@ -201,6 +211,46 @@ export default function Home() {
     loadPosts();
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  const loadUnreadAlerts = useCallback(async () => {
+    if (!session) {
+      setUnreadAlerts(0);
+      return;
+    }
+    const { count, error } = await supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .is("read_at", null);
+    if (error) {
+      setMsg(error.message);
+      return;
+    }
+    setUnreadAlerts(count ?? 0);
+  }, [session]);
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => void loadUnreadAlerts(), 0);
+    const timer = window.setInterval(() => void loadUnreadAlerts(), 15000);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(timer);
+    };
+  }, [loadUnreadAlerts]);
+
+  useEffect(() => {
+    if (tab !== "home" || pendingPostId === null) return;
+    const postExists = posts.some((post) => post.id === pendingPostId);
+    const timer = window.setTimeout(() => {
+      if (!postExists) {
+        setMsg(t("This post is no longer available."));
+        setPendingPostId(null);
+        return;
+      }
+      document.getElementById(`post-${pendingPostId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setPendingPostId(null);
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [pendingPostId, posts, tab, t]);
 
   async function signUp() {
     const { error } = await supabase.auth.signUp({ email, password });
@@ -302,6 +352,20 @@ export default function Home() {
     setMenuId(null);
   }
 
+  function openMessages(userId?: string) {
+    setMessageUserId(userId ?? null);
+    go("messages");
+  }
+
+  function openPost(postId: number) {
+    setPendingPostId(postId);
+    go("home");
+  }
+
+  const updateUnreadAlerts = useCallback((count: number) => {
+    setUnreadAlerts(count);
+  }, []);
+
   const initial = (myName || session?.user.email || "?").charAt(0).toUpperCase();
 
   if (!ready) return <div className="min-h-screen bg-[#0a0a0a]" />;
@@ -329,18 +393,39 @@ export default function Home() {
       }}
     >
       <TopBar
-        onCreate={() => {
+        onCreatePost={() => {
           go("home");
+          setStoryComposerOpen(false);
           setComposerOpen(true);
         }}
+        onCreateReel={() => {
+          setComposerOpen(false);
+          setStoryComposerOpen(false);
+          go("reels");
+        }}
+        onCreateStory={() => {
+          setComposerOpen(false);
+          go("home");
+          setStoryComposerOpen(true);
+        }}
         onSearch={() => go("search")}
-        onMessages={() => go("messages")}
+        onMessages={() => openMessages()}
       />
 
       <main className="mx-auto max-w-xl space-y-3 p-3">
         {tab === "home" && (
           <>
-            {msg && !composerOpen && <p className="text-sm text-red-500">{msg}</p>}
+            {msg && !composerOpen && <p className="text-sm text-red-500">{t(msg)}</p>}
+            <StoriesView
+              session={session}
+              avatarUrl={myAvatar}
+              createOpen={storyComposerOpen}
+              onCreateHandled={() => setStoryComposerOpen(false)}
+              onCreateStory={() => {
+                setComposerOpen(false);
+                setStoryComposerOpen(true);
+              }}
+            />
             <Composer
               avatarUrl={myAvatar}
               initial={initial}
@@ -359,9 +444,9 @@ export default function Home() {
 
             {posts.map((p) => {
               const own = session.user.id === p.user_id;
-              const name = p.profiles?.display_name || p.profiles?.username || "Anonymous";
+              const name = p.profiles?.display_name || p.profiles?.username || t("Anonymous");
               return (
-                <article key={p.id} className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
+                <article id={`post-${p.id}`} key={p.id} className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
                   <div className="flex items-start justify-between">
                     <button onClick={() => openProfile(p.user_id)} className="flex items-center gap-3 text-left">
                       {p.profiles?.avatar_url ? (
@@ -382,14 +467,14 @@ export default function Home() {
                             </span>
                           )}
                         </p>
-                        <p className="text-xs text-gray-500">{new Date(p.created_at).toLocaleString()}</p>
+                        <p className="text-xs text-gray-500">{new Date(p.created_at).toLocaleString(language === "es" ? "es-US" : "en-US")}</p>
                       </div>
                     </button>
 
                     <div className="relative">
                       <button
                         onClick={() => setMenuId(menuId === p.id ? null : p.id)}
-                        aria-label="More"
+                        aria-label={t("More")}
                         className="px-2 text-xl leading-none text-gray-400 hover:text-white"
                       >
                         •••
@@ -398,7 +483,7 @@ export default function Home() {
                         <div className="absolute right-0 z-10 mt-1 w-48 space-y-3 rounded border border-[#333] bg-[#1c1c1c] p-3">
                           {(isAdmin || own) && (
                             <button onClick={() => deletePost(p.id)} className="block text-sm text-red-500">
-                              Delete post
+                              {t("Delete post")}
                             </button>
                           )}
                           {!own && <ReportButton postId={p.id} session={session} />}
@@ -421,9 +506,24 @@ export default function Home() {
         )}
 
         {tab === "reels" && <ReelsView session={session} isAdmin={isAdmin} />}
-        {tab === "messages" && <ComingSoon title="Messages" text="Talk straight, one on one." />}
+        {tab === "messages" && (
+          <FriendsMessenger
+            session={session}
+            initialUserId={messageUserId}
+            onOpenProfile={openProfile}
+          />
+        )}
         {tab === "dating" && <DatingView session={session} onOpenProfile={openProfile} />}
-        {tab === "alerts" && <ComingSoon title="Alerts" text="Likes, comments, and who viewed you." />}
+        {tab === "alerts" && (
+          <AlertsView
+            onOpenProfile={openProfile}
+            onOpenReportQueue={() => go("profile")}
+            onOpenFeedback={() => go("profile")}
+            onOpenMessages={openMessages}
+            onOpenPost={openPost}
+            onUnreadCount={updateUnreadAlerts}
+          />
+        )}
         {tab === "search" && <ComingSoon title="Search" text="Find people and posts." />}
 
         {tab === "profile" && (session || viewingId) && (
@@ -432,17 +532,20 @@ export default function Home() {
             profileId={viewingId ?? session.user.id}
             session={session}
             onBack={viewingId ? () => go(returnTab) : undefined}
+            onMessage={openMessages}
           />
         )}
         {tab === "profile" && (
           <>
-            {isAdmin && !viewingId && <AdminPanel isAdmin={isAdmin} />}
+            {isAdmin && !viewingId && (
+              <AdminPanel isAdmin={isAdmin} onMessageReportedProfile={openMessages} />
+            )}
             {!viewingId && (
               <button
                 onClick={() => supabase.auth.signOut()}
                 className={anton.className + " w-full rounded border border-[#555] py-3 uppercase tracking-wider"}
               >
-                Log out
+                {t("Log out")}
               </button>
             )}
           </>
@@ -454,6 +557,7 @@ export default function Home() {
         onSelect={(id) => go(id as Tab)}
         avatarUrl={myAvatar}
         initial={initial}
+        alertCount={unreadAlerts}
       />
     </div>
   );

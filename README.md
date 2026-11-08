@@ -20,6 +20,10 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Languages
+
+The interface supports English and Spanish. Use the language selector on the sign-in screen or the language button in the app header; the choice is saved in the current browser. Interface labels are translated, while posts, profile text, captions, and chat messages stay in the language their authors wrote them.
+
 ## Dating selfie-photo review and match calls
 
 Dating access requires an admin to manually review a private selfie photo against the account photo when available. Admin accounts are automatically approved for Dating, but still need to self-attest that they are at least 18. This is not face recognition, identity verification, or proof of age. Selfie photos are stored in a private Supabase Storage bucket and deleted after review. Discovery stays locked for non-admin accounts until an admin approves the check.
@@ -28,9 +32,19 @@ Dating profiles can include up to three regular photos, one meme, and one AI-gen
 
 Mutual matches get conversation starter prompts in their private match chat and can start audio or video calls with each other there. The recipient must have that match chat open to receive a call. Call signaling is restricted to the two verified match members. Calls remain separate from selfie review and use TURN for media.
 
+## Friends, messages, alerts, and feedback
+
+Members can send friend requests from profiles. Private messaging and audio/video calls become available only after a request is accepted; both people must have the conversation open to receive a call. Admins can also start private, text-only moderation conversations with members without a friend request. Members can report other profiles; reports alert admins and appear in the admin queue, where admins can message the reported member. Alerts also cover incoming and accepted friend requests, comments, shares, and member feedback or suggestions. Feedback forms appear on non-admin profiles; admins receive an alert for each new submission and can review and resolve submissions in their profile's admin panel.
+
+Apply `supabase/migrations/20261108130000_friends_messenger_alerts_feedback.sql`, `supabase/migrations/20261108133000_feedback_admin_alerts.sql`, and `supabase/migrations/20261108140000_profile_reports_admin_messaging.sql` after the migrations listed below. The follow-up migrations add feedback alerts, profile reporting, admin moderation messages, and moderation-message alerts; apply them even if the friends-and-messaging migration was already applied. Sharing notifications are recorded only after the share succeeds. Friend calls use the same TURN settings as Dating calls; moderation conversations are text-only.
+
+## Stories
+
+The top-bar **+** menu offers Post, Reel, and Story. Stories support images and videos up to 60 seconds / 50 MB, can include a caption, and disappear from the active Stories feed after 24 hours. Story media is stored in a private bucket and served with signed URLs. Apply `supabase/migrations/20261108150000_profile_stories.sql` after the other social-feature migrations.
+
 ## Reels
 
-Reels support short video uploads, camera recording, likes, reports, and two remix layouts: side-by-side Duet and original-then-reaction. Videos are private in Supabase Storage; the feed uses temporary signed URLs. Every new Reel stays hidden until an admin reviews and approves it. Reports go to the admin queue. If an admin confirms nudity, they can remove the Reel and ban that creator from Reels. This is manual moderation, not automatic detection, and the ban applies to Reels rather than the whole OpenVoice account.
+Reels support short video uploads, camera recording, likes, reports, and two remix layouts: side-by-side Duet and original-then-reaction. Videos are private in Supabase Storage; the feed uses temporary signed URLs. Every new Reel stays hidden until an admin reviews and approves it. Reports go to the admin queue. Documentary footage of fights and police activity is allowed; threats, calls for violence, graphic gore, doxxing, sexual content, and nudity are not. If an admin confirms nudity, they can remove the Reel and ban that creator from Reels. This is manual moderation, not automatic detection, and the ban applies to Reels rather than the whole OpenVoice account.
 
 Before using it:
 
@@ -38,8 +52,12 @@ Before using it:
 2. Apply `supabase/migrations/20261108113000_dating_selfie_photo_review.sql` to the Supabase project.
 3. Apply `supabase/migrations/20261108115500_admin_dating_auto_approval.sql` to the Supabase project. Admin accounts still need to save a date of birth and self-attest that they are 18 or older; their selfie review is automatically approved.
 4. Apply `supabase/migrations/20261108121500_reels_and_remixes.sql` to enable Reels and private video storage.
-5. In Supabase Realtime settings, disable **Allow public access** so private match-call signaling channels are protected by the migration's policies.
-6. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
+5. Apply `supabase/migrations/20261108130000_friends_messenger_alerts_feedback.sql` to enable friend requests, messages, alerts, and profile feedback.
+6. Apply `supabase/migrations/20261108133000_feedback_admin_alerts.sql` to notify admins of member feedback and suggestions.
+7. Apply `supabase/migrations/20261108140000_profile_reports_admin_messaging.sql` to enable profile reports and admin moderation conversations.
+8. Apply `supabase/migrations/20261108150000_profile_stories.sql` to enable 24-hour Stories.
+9. In Supabase Realtime settings, disable **Allow public access** so private match and friend-call signaling channels are protected by the migrations' policies.
+10. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
 
 ```env
 DATING_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp

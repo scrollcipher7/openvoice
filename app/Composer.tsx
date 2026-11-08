@@ -1,5 +1,6 @@
 "use client";
 import { Anton } from "next/font/google";
+import { useLanguage } from "./LanguageContext";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
 
@@ -37,6 +38,7 @@ export default function Composer({
   msg: string;
   onPost: () => Promise<boolean>;
 }) {
+  const { t } = useLanguage();
   async function submit() {
     const ok = await onPost();
     if (ok) setOpen(false);
@@ -62,9 +64,9 @@ export default function Composer({
           onClick={() => setOpen(true)}
           className="flex-1 rounded-full border border-[#333] bg-[#1c1c1c] px-4 py-2 text-left text-gray-400 hover:border-[#f5b301]"
         >
-          What&apos;s on your mind?
+          {t("What's on your mind?")}
         </button>
-        <button onClick={() => setOpen(true)} aria-label="Add photo" className="text-2xl">
+        <button onClick={() => setOpen(true)} aria-label={t("Add photo")} className="text-2xl">
           🖼️
         </button>
       </div>
@@ -75,19 +77,19 @@ export default function Composer({
     <div className="space-y-2 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
       <div className="flex items-center gap-3">
         {avatar}
-        <p className={anton.className + " text-lg uppercase tracking-wider"}>New post</p>
+        <p className={anton.className + " text-lg uppercase tracking-wider"}>{t("New post")}</p>
       </div>
       <textarea
         className={inputCls}
         rows={3}
-        placeholder="What's on your mind?"
+        placeholder={t("What's on your mind?")}
         value={text}
         onChange={(e) => setText(e.target.value)}
         autoFocus
       />
       <input
         className={inputCls}
-        placeholder="Paste a link (YouTube, Spotify, SoundCloud, TikTok, Amazon Music...)"
+        placeholder={t("Paste a link (YouTube, Spotify, SoundCloud, TikTok, Amazon Music...)")}
         value={linkUrl}
         onChange={(e) => setLinkUrl(e.target.value)}
       />
@@ -105,13 +107,13 @@ export default function Composer({
           className={anton.className + " rounded px-6 py-2 uppercase tracking-wider text-black disabled:opacity-50"}
           style={{ background: GOLD }}
         >
-          {posting ? "Posting..." : "Post"}
+          {posting ? t("Posting...") : t("Post")}
         </button>
         <button onClick={() => setOpen(false)} className="rounded border border-[#555] px-5 py-2">
-          Cancel
+          {t("Cancel")}
         </button>
       </div>
-      {msg && <p className="text-sm text-red-500">{msg}</p>}
+      {msg && <p className="text-sm text-red-500">{t(msg)}</p>}
     </div>
   );
 }

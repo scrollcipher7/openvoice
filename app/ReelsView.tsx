@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { useLanguage } from "./LanguageContext";
 
 type RemixStyle = "duet" | "react_after";
 type ReportReason = "nudity_or_sexual_content" | "violence_or_threats" | "harassment_or_doxxing" | "spam_or_other";
@@ -92,11 +93,13 @@ function validateVideoDuration(file: File): Promise<void> {
 }
 
 export default function ReelsView({ session, isAdmin }: { session: Session | null; isAdmin: boolean }) {
+  const { language, t } = useLanguage();
   const [reels, setReels] = useState<Reel[]>([]);
   const [moderationQueue, setModerationQueue] = useState<ReviewReel[]>([]);
   const [isReelsBanned, setIsReelsBanned] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [caption, setCaption] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [remixSource, setRemixSource] = useState<Reel | null>(null);
@@ -111,6 +114,7 @@ export default function ReelsView({ session, isAdmin }: { session: Session | nul
   const [notice, setNotice] = useState("");
   const cameraRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reelsFeedRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -200,6 +204,28 @@ export default function ReelsView({ session, isAdmin }: { session: Session | nul
     const timer = window.setTimeout(() => void loadReels(), 0);
     return () => window.clearTimeout(timer);
   }, [loadReels]);
+
+  useEffect(() => {
+    const feed = reelsFeedRef.current;
+    if (!feed || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const videos = entry.target.querySelectorAll("video");
+        videos.forEach((video) => {
+          if (entry.isIntersecting) {
+            void video.play().catch((cause: unknown) => {
+              if (cause instanceof DOMException && cause.name === "AbortError") return;
+              setError(cause instanceof Error ? `Could not play Reel video: ${cause.message}` : "Could not play Reel video.");
+            });
+          } else {
+            video.pause();
+          }
+        });
+      }
+    }, { root: feed, threshold: 0.6 });
+    feed.querySelectorAll("[data-reel-card]").forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, [reels]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadModerationQueue(), 0);
@@ -343,6 +369,7 @@ export default function ReelsView({ session, isAdmin }: { session: Session | nul
       if (fileInputRef.current) fileInputRef.current.value = "";
       setCaption("");
       setRemixSource(null);
+      setComposerOpen(false);
       setNotice("Your Reel was sent to admin review. It will appear in the feed after approval.");
       await Promise.all([loadReels(), loadModerationQueue()]);
     } catch (cause) {
@@ -465,51 +492,59 @@ export default function ReelsView({ session, isAdmin }: { session: Session | nul
     setCaption("");
     setRemixSource(reel);
     setRemixStyle(style);
+    setComposerOpen(true);
     window.sessionStorage.setItem("openvoice-active-tab", "reels");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  if (!session) return <p className="rounded border border-[#333] bg-[#141414] p-5 text-gray-300">Sign in to watch and post Reels.</p>;
+  if (!session) return <p className="rounded border border-[#333] bg-[#141414] p-5 text-gray-300">{t("Sign in to watch and post Reels.")}</p>;
 
   return (
-    <section className="space-y-4 pb-4 text-white">
-      <header className="flex items-center justify-between rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
+    <section className="space-y-3 pb-4 text-white">
+      <header className="flex items-center justify-between px-1 py-1">
         <div>
-          <h2 className="text-2xl font-bold uppercase tracking-wide" style={{ color: GOLD }}>Reels</h2>
-          <p className="text-sm text-gray-400">Short videos, reactions, and remixes.</p>
+          <h2 className="text-xl font-bold">{t("Reels")}</h2>
         </div>
-        <button type="button" onClick={() => void loadReels()} className="rounded bg-[#292929] px-3 py-2 text-sm">Refresh</button>
+        <div className="flex gap-2">
+          {!isReelsBanned && (
+            <button type="button" onClick={() => setComposerOpen((open) => !open)} className="rounded-full bg-[#292929] px-3 py-2 text-sm">
+              {composerOpen ? t("Close") : `＋ ${t("Post Reel")}`}
+            </button>
+          )}
+          <button type="button" onClick={() => void loadReels()} aria-label={t("Refresh")} className="rounded-full bg-[#292929] px-3 py-2 text-sm">↻</button>
+        </div>
       </header>
 
-      {error && <p role="alert" className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">{error}</p>}
-      {notice && <p role="status" className="rounded border border-[#665000] bg-[#2a2208] p-3 text-sm text-yellow-100">{notice}</p>}
-      {isReelsBanned && <p className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">This account is banned from posting and interacting with Reels.</p>}
-      <p className="rounded border border-[#333] bg-[#141414] p-3 text-sm text-gray-400">
-        New Reels are reviewed before they appear. Confirmed nudity means a ban from Reels. Reports help admins review published videos.
-      </p>
+      {error && <p role="alert" className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">{t(error)}</p>}
+      {notice && <p role="status" className="rounded border border-[#665000] bg-[#2a2208] p-3 text-sm text-yellow-100">{t(notice)}</p>}
+      {isReelsBanned && <p className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">{t("This account is banned from posting and interacting with Reels.")}</p>}
+      <details className="rounded border border-[#333] bg-[#141414] px-3 py-2 text-sm text-gray-400">
+        <summary className="cursor-pointer">{t("Reels rules and moderation")}</summary>
+        <p className="pt-2">{t("New Reels are reviewed before they appear. Confirmed nudity means a ban from Reels. Documentary footage of fights and police activity is allowed; threats, calls for violence, graphic gore, and doxxing are not. Reports help admins review published videos.")}</p>
+      </details>
 
-      {!isReelsBanned && <div className="space-y-3 rounded-lg border border-[#333] bg-[#141414] p-4">
-        <h3 className="font-semibold">{remixSource ? `Remix ${remixSource.display_name}'s Reel` : "Post a Reel"}</h3>
+      {composerOpen && !isReelsBanned && <div className="max-h-[70dvh] space-y-3 overflow-y-auto rounded-lg border border-[#333] bg-[#141414] p-4">
+        <h3 className="font-semibold">{remixSource ? `${t("Remix")} ${remixSource.display_name}` : t("Post a Reel")}</h3>
         {remixSource && (
           <div className="flex gap-2">
-            <button type="button" disabled={busy || recording} onClick={() => setRemixStyle("duet")} className={`rounded px-3 py-2 text-sm disabled:opacity-50 ${remixStyle === "duet" ? "text-black" : "bg-[#292929]"}`} style={remixStyle === "duet" ? { background: GOLD } : undefined}>Side-by-side Duet</button>
-            <button type="button" disabled={busy || recording} onClick={() => setRemixStyle("react_after")} className={`rounded px-3 py-2 text-sm disabled:opacity-50 ${remixStyle === "react_after" ? "text-black" : "bg-[#292929]"}`} style={remixStyle === "react_after" ? { background: GOLD } : undefined}>React after</button>
-            <button type="button" disabled={busy || recording} onClick={() => { stopCamera(); setRemixSource(null); setVideoFile(null); }} className="ml-auto rounded px-3 py-2 text-sm text-gray-300 disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={busy || recording} onClick={() => setRemixStyle("duet")} className={`rounded px-3 py-2 text-sm disabled:opacity-50 ${remixStyle === "duet" ? "text-black" : "bg-[#292929]"}`} style={remixStyle === "duet" ? { background: GOLD } : undefined}>{t("Side-by-side Duet")}</button>
+            <button type="button" disabled={busy || recording} onClick={() => setRemixStyle("react_after")} className={`rounded px-3 py-2 text-sm disabled:opacity-50 ${remixStyle === "react_after" ? "text-black" : "bg-[#292929]"}`} style={remixStyle === "react_after" ? { background: GOLD } : undefined}>{t("React after")}</button>
+            <button type="button" disabled={busy || recording} onClick={() => { stopCamera(); setRemixSource(null); setVideoFile(null); }} className="ml-auto rounded px-3 py-2 text-sm text-gray-300 disabled:opacity-50">{t("Cancel")}</button>
           </div>
         )}
         {cameraStream && (
           <div className="space-y-2">
             <video ref={cameraRef} autoPlay muted playsInline className="aspect-video max-h-72 w-full rounded bg-black object-contain" />
-            <p className="text-sm text-gray-400">{recording ? `Recording ${recordingSeconds}/${MAX_DURATION_SECONDS}s` : "Camera is ready. Recording stops at 60 seconds."}</p>
+            <p className="text-sm text-gray-400">{recording ? `${t("Recording")} ${recordingSeconds}/${MAX_DURATION_SECONDS}s` : t("Camera is ready. Recording stops at 60 seconds.")}</p>
             {!recording ? (
-              <button type="button" onClick={startRecording} className="rounded bg-red-700 px-3 py-2 text-sm font-semibold">Start recording</button>
+              <button type="button" onClick={startRecording} className="rounded bg-red-700 px-3 py-2 text-sm font-semibold">{t("Start recording")}</button>
             ) : (
-              <button type="button" onClick={finishRecording} className="rounded bg-red-700 px-3 py-2 text-sm font-semibold">Stop recording</button>
+              <button type="button" onClick={finishRecording} className="rounded bg-red-700 px-3 py-2 text-sm font-semibold">{t("Stop recording")}</button>
             )}
           </div>
         )}
         <label className="block text-sm text-gray-300">
-          {remixSource ? "Choose a reaction video from your gallery" : "Choose a video from your device"}
+          {t(remixSource ? "Choose a reaction video from your gallery" : "Choose a video from your device")}
           <input
             ref={fileInputRef}
             type="file"
@@ -521,147 +556,151 @@ export default function ReelsView({ session, isAdmin }: { session: Session | nul
         </label>
         {!cameraStream ? (
           <button type="button" onClick={() => void startCamera()} disabled={busy} className="rounded border border-[#555] px-3 py-2 text-sm disabled:opacity-50">
-            Record with camera
+            {t("Record with camera")}
           </button>
         ) : (
           <button type="button" onClick={stopCamera} disabled={recording} className="rounded border border-[#555] px-3 py-2 text-sm disabled:opacity-50">
-            Close camera
+            {t("Close camera")}
           </button>
         )}
-        {videoFile && <p className="text-sm text-green-300">Selected: {videoFile.name}</p>}
+        {videoFile && <p className="text-sm text-green-300">{t("Selected:")} {videoFile.name}</p>}
         <label className="block text-sm text-gray-300">
-          Caption
+          {t("Caption")}
           <textarea maxLength={280} value={caption} onChange={(event) => setCaption(event.target.value)} className="mt-1 block min-h-20 w-full rounded border border-[#444] bg-[#0a0a0a] p-3 text-white" />
         </label>
-        <p className="text-xs text-gray-500">MP4, WebM, or QuickTime · up to 60 seconds · 50 MB maximum. Follow the OpenVoice rules: no nudity, sexual content, threats, violence, doxxing, or harassment.</p>
+        <p className="text-xs text-gray-500">{t("MP4, WebM, or QuickTime · up to 60 seconds · 50 MB maximum. Follow the OpenVoice rules: no nudity or sexual content, threats, calls for violence, graphic gore, doxxing, or harassment. Documentary footage of fights and police activity is allowed.")}</p>
         <button type="button" onClick={() => void publishReel()} disabled={!videoFile || busy || recording || isReelsBanned} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-50" style={{ background: GOLD }}>
-          {busy ? "Posting…" : remixSource ? "Post remix" : "Post Reel"}
+          {busy ? t("Posting…") : remixSource ? t("Post remix") : t("Post Reel")}
         </button>
       </div>}
 
       {isAdmin && (
-        <section className="space-y-3 rounded-lg border border-[#665000] bg-[#141414] p-4">
+        <details className="rounded-lg border border-[#665000] bg-[#141414] p-4">
+          <summary className="cursor-pointer font-semibold" style={{ color: GOLD }}>{t("Reels moderation queue")} ({moderationQueue.length})</summary>
+          <section className="mt-3 space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="font-semibold" style={{ color: GOLD }}>Reels moderation queue</h3>
-            <button type="button" onClick={() => void loadModerationQueue()} className="rounded bg-[#292929] px-3 py-2 text-sm">Refresh</button>
+            <h3 className="font-semibold" style={{ color: GOLD }}>{t("Reels moderation queue")}</h3>
+            <button type="button" onClick={() => void loadModerationQueue()} className="rounded bg-[#292929] px-3 py-2 text-sm">{t("Refresh")}</button>
           </div>
-          <p className="text-sm text-gray-400">New uploads stay private until approved. If you confirm nudity, remove the Reel and ban the creator from Reels.</p>
+          <p className="text-sm text-gray-400">{t("New uploads stay private until approved. If you confirm nudity, remove the Reel and ban the creator from Reels.")}</p>
           {moderationQueue.map((reel) => (
             <article key={reel.id} className="space-y-2 rounded border border-[#333] p-3">
               <p className="font-semibold">{reel.display_name}{reel.username ? <span className="ml-2 text-sm text-gray-400">@{reel.username}</span> : null}</p>
-              <p className="text-xs text-gray-500">Submitted {new Date(reel.created_at).toLocaleString()} · {reel.report_count} pending report(s)</p>
-              {!!reel.report_reasons.length && <p className="text-sm text-yellow-100">Reported for: {reel.report_reasons.join(", ").replaceAll("_", " ")}</p>}
+              <p className="text-xs text-gray-500">{t("Submitted")} {new Date(reel.created_at).toLocaleString(language === "es" ? "es-US" : "en-US")} · {reel.report_count} {t("pending report(s)")}</p>
+              {!!reel.report_reasons.length && <p className="text-sm text-yellow-100">{t("Reported for:")} {t(reel.report_reasons.join(", ").replaceAll("_", " "))}</p>}
               {!!reel.report_details.length && <ul className="list-disc space-y-1 pl-5 text-sm text-gray-300">{reel.report_details.map((detail, index) => <li key={`${reel.id}-report-${index}`}>{detail}</li>)}</ul>}
               {reel.source_video_url && (
                 <div>
-                  <p className="text-xs text-gray-400">Original · {reel.source_display_name}</p>
+                  <p className="text-xs text-gray-400">{t("Original")} · {reel.source_display_name}</p>
                   <video src={reel.source_video_url} controls playsInline preload="metadata" className="max-h-64 w-full rounded bg-black object-contain" />
                 </div>
               )}
               {reel.video_url ? (
                 <video src={reel.video_url} controls playsInline preload="metadata" className="max-h-64 w-full rounded bg-black object-contain" />
-              ) : <p className="text-sm text-red-300">Video file was already removed. You can still resolve the report.</p>}
+              ) : <p className="text-sm text-red-300">{t("Video file was already removed. You can still resolve the report.")}</p>}
               {reel.caption && <p className="text-sm">{reel.caption}</p>}
               <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={busy} onClick={() => void reviewReel(reel, "approve")} className="rounded bg-green-800 px-3 py-2 text-sm disabled:opacity-50">Approve</button>
-                <button type="button" disabled={busy} onClick={() => void reviewReel(reel, "remove")} className="rounded bg-[#333] px-3 py-2 text-sm disabled:opacity-50">Remove</button>
+                <button type="button" disabled={busy} onClick={() => void reviewReel(reel, "approve")} className="rounded bg-green-800 px-3 py-2 text-sm disabled:opacity-50">{t("Approve")}</button>
+                <button type="button" disabled={busy} onClick={() => void reviewReel(reel, "remove")} className="rounded bg-[#333] px-3 py-2 text-sm disabled:opacity-50">{t("Remove")}</button>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => {
-                    if (window.confirm("Remove all of this creator’s Reels and ban them from Reels for confirmed nudity?")) {
+                    if (window.confirm(t("Remove all of this creator’s Reels and ban them from Reels for confirmed nudity?"))) {
                       void reviewReel(reel, "ban_for_nudity");
                     }
                   }}
                   className="rounded bg-red-800 px-3 py-2 text-sm disabled:opacity-50"
                 >
-                  Confirmed nudity: remove & ban
+                  {t("Confirmed nudity: remove & ban")}
                 </button>
               </div>
             </article>
           ))}
-          {!moderationQueue.length && <p className="text-sm text-gray-400">No Reels need review.</p>}
-        </section>
+          {!moderationQueue.length && <p className="text-sm text-gray-400">{t("No Reels need review.")}</p>}
+          </section>
+        </details>
       )}
 
-      {loading ? <p className="p-4 text-gray-400">Loading Reels…</p> : reels.length ? (
-        <div className="space-y-4">
+      {loading ? <p className="p-4 text-gray-400">{t("Loading Reels…")}</p> : reels.length ? (
+        <div ref={reelsFeedRef} className="mx-auto h-[calc(100dvh-190px)] min-h-[420px] max-h-[820px] max-w-[440px] snap-y snap-mandatory space-y-3 overflow-y-auto rounded-xl">
           {reels.map((reel) => (
-            <article key={reel.id} className="space-y-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-semibold">{reel.display_name}{reel.username ? <span className="ml-2 text-sm text-gray-400">@{reel.username}</span> : null}</p>
-                  <p className="text-xs text-gray-500">{new Date(reel.created_at).toLocaleString()}</p>
-                  {reel.source_reel_id && <p className="text-xs text-yellow-100">Remix of {reel.source_display_name ?? "another Reel"}{reel.source_username ? ` (@${reel.source_username})` : ""}</p>}
-                </div>
-                {(reel.user_id === session.user.id || isAdmin) && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      if (window.confirm("Delete this Reel?")) void deleteReel(reel);
-                    }}
-                    className="rounded border border-[#444] px-3 py-2 text-sm text-gray-300 disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
+            <article key={reel.id} data-reel-card className="relative h-[calc(100dvh-190px)] min-h-[420px] max-h-[820px] snap-start overflow-hidden rounded-xl bg-black">
               {reel.remix_style === "duet" && reel.source_video_url ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="mb-1 text-xs text-gray-400">Original · {reel.source_display_name}</p>
-                    <video src={reel.source_video_url} controls playsInline preload="metadata" className="aspect-[9/16] max-h-[32rem] w-full rounded bg-black object-contain" />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs text-gray-400">Duet · {reel.display_name}</p>
-                    <video src={reel.video_url} controls playsInline preload="metadata" className="aspect-[9/16] max-h-[32rem] w-full rounded bg-black object-contain" />
-                  </div>
+                <div className="absolute inset-0 grid grid-cols-2">
+                  <video src={reel.source_video_url} muted loop playsInline preload="metadata" className="h-full w-full object-cover" />
+                  <video src={reel.video_url} muted loop playsInline preload="metadata" className="h-full w-full object-cover" />
                 </div>
               ) : reel.remix_style === "react_after" && reel.source_video_url ? (
-                <div className="space-y-2">
-                  <div>
-                    <p className="mb-1 text-xs text-gray-400">Original · {reel.source_display_name}</p>
-                    <video src={reel.source_video_url} controls playsInline preload="metadata" className="aspect-video max-h-[32rem] w-full rounded bg-black object-contain" />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs text-gray-400">Reaction · {reel.display_name}</p>
-                    <video src={reel.video_url} controls playsInline preload="metadata" className="aspect-video max-h-[32rem] w-full rounded bg-black object-contain" />
-                  </div>
+                <div className="absolute inset-0 flex flex-col">
+                  <video src={reel.source_video_url} muted loop playsInline preload="metadata" className="h-1/2 w-full object-cover" />
+                  <video src={reel.video_url} muted loop playsInline preload="metadata" className="h-1/2 w-full object-cover" />
                 </div>
-              ) : (
-                <video src={reel.video_url} controls playsInline preload="metadata" className="max-h-[70vh] w-full rounded bg-black object-contain" />
-              )}
-              {reel.source_caption && <p className="text-sm text-gray-400">Original: {reel.source_caption}</p>}
-              {reel.caption && <p className="whitespace-pre-wrap">{reel.caption}</p>}
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => void toggleLike(reel)} disabled={busy || isReelsBanned || reel.user_id === session.user.id} className="rounded border border-[#444] px-3 py-2 text-sm disabled:opacity-50">
-                  {reel.liked_by_me ? "♥ Liked" : "♡ Like"} · {reel.like_count}
+              ) : reel.video_url ? (
+                <video
+                  src={reel.video_url}
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onClick={(event) => {
+                    if (event.currentTarget.paused) void event.currentTarget.play();
+                    else event.currentTarget.pause();
+                  }}
+                />
+              ) : <div className="absolute inset-0 flex items-center justify-center bg-[#111] text-sm text-gray-400">{t("Video file was already removed.")}</div>}
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/80" />
+              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 flex-col items-center gap-5">
+                <button type="button" onClick={() => void toggleLike(reel)} disabled={busy || isReelsBanned || reel.user_id === session.user.id} className="flex flex-col items-center gap-1 text-white drop-shadow disabled:opacity-60" aria-label={t("Like")}>
+                  <span className="text-3xl">{reel.liked_by_me ? "♥" : "♡"}</span>
+                  <span className="text-xs">{reel.like_count}</span>
                 </button>
-                <button type="button" disabled={busy || recording || isReelsBanned} onClick={() => beginRemix(reel, "duet")} className="rounded border border-[#444] px-3 py-2 text-sm disabled:opacity-50">Side-by-side Duet</button>
-                <button type="button" disabled={busy || recording || isReelsBanned} onClick={() => beginRemix(reel, "react_after")} className="rounded border border-[#444] px-3 py-2 text-sm disabled:opacity-50">React after</button>
+                <button type="button" disabled={busy || recording || isReelsBanned} onClick={() => beginRemix(reel, "duet")} className="flex flex-col items-center gap-1 text-white drop-shadow disabled:opacity-60" aria-label={t("Remix")}>
+                  <span className="text-2xl">⟳</span>
+                  <span className="text-[10px]">{t("Remix")}</span>
+                </button>
                 {reel.user_id !== session.user.id && !isAdmin && !isReelsBanned && (
-                  <button type="button" onClick={() => setReportTarget(reportTarget === reel.id ? null : reel.id)} className="ml-auto rounded border border-[#444] px-3 py-2 text-sm text-gray-300">Report</button>
+                  <button type="button" onClick={() => setReportTarget(reportTarget === reel.id ? null : reel.id)} className="flex flex-col items-center gap-1 text-white drop-shadow" aria-label={t("Report")}>
+                    <span className="text-2xl">···</span>
+                    <span className="text-[10px]">{t("Report")}</span>
+                  </button>
+                )}
+                {(reel.user_id === session.user.id || isAdmin) && (
+                  <button type="button" disabled={busy} onClick={() => {
+                    if (window.confirm(t("Delete this Reel?"))) void deleteReel(reel);
+                  }} className="text-xs text-white drop-shadow disabled:opacity-60">{t("Delete")}</button>
                 )}
               </div>
-              {reportTarget === reel.id && (
-                <div className="space-y-2 rounded border border-[#444] p-3">
-                  <label className="block text-sm">Reason
-                    <select value={reportReason} onChange={(event) => setReportReason(event.target.value as ReportReason)} className="mt-1 block w-full rounded border border-[#444] bg-[#0a0a0a] p-2 text-white">
-                      <option value="nudity_or_sexual_content">Nudity or sexual content</option>
-                      <option value="violence_or_threats">Violence or threats</option>
-                      <option value="harassment_or_doxxing">Harassment or doxxing</option>
-                      <option value="spam_or_other">Spam or other</option>
-                    </select>
-                  </label>
-                  <textarea maxLength={500} value={reportDetails} onChange={(event) => setReportDetails(event.target.value)} placeholder="Details (optional)" className="block w-full rounded border border-[#444] bg-[#0a0a0a] p-2 text-white" />
-                  <button type="button" onClick={() => void submitReport(reel)} className="rounded bg-[#333] px-3 py-2 text-sm">Send report</button>
+              <div className="absolute bottom-4 left-4 right-16 space-y-2 text-white drop-shadow">
+                <div className="flex items-center gap-2">
+                  {reel.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={reel.avatar_url} alt="" className="h-9 w-9 rounded-full border border-white object-cover" />
+                  ) : <span className="flex h-9 w-9 items-center justify-center rounded-full border border-white bg-[#333] font-bold">{reel.display_name.charAt(0).toUpperCase()}</span>}
+                  <p className="font-semibold">{reel.display_name}{reel.username ? <span className="ml-1 text-sm">@{reel.username}</span> : null}</p>
                 </div>
-              )}
+                {reel.caption && <p className="line-clamp-3 whitespace-pre-wrap text-sm">{reel.caption}</p>}
+                {reel.source_reel_id && <p className="text-xs">{t("Remix of")} {reel.source_display_name ?? t("another Reel")}</p>}
+                {reportTarget === reel.id && (
+                  <div className="pointer-events-auto space-y-2 rounded-lg border border-white/30 bg-black/90 p-3">
+                    <label className="block text-sm">{t("Reason")}
+                      <select value={reportReason} onChange={(event) => setReportReason(event.target.value as ReportReason)} className="mt-1 block w-full rounded border border-[#444] bg-[#0a0a0a] p-2 text-white">
+                        <option value="nudity_or_sexual_content">{t("Nudity or sexual content")}</option>
+                        <option value="violence_or_threats">{t("Threats or violence")}</option>
+                        <option value="harassment_or_doxxing">{t("Harassment or doxxing")}</option>
+                        <option value="spam_or_other">{t("Spam or other")}</option>
+                      </select>
+                    </label>
+                    <textarea maxLength={500} value={reportDetails} onChange={(event) => setReportDetails(event.target.value)} placeholder={t("Details (optional)")} className="block w-full rounded border border-[#444] bg-[#0a0a0a] p-2 text-white" />
+                    <button type="button" onClick={() => void submitReport(reel)} className="rounded bg-[#333] px-3 py-2 text-sm">{t("Send report")}</button>
+                  </div>
+                )}
+              </div>
             </article>
           ))}
         </div>
-      ) : <p className="rounded border border-[#333] bg-[#141414] p-4 text-gray-400">No Reels yet. Post a short video to start the feed.</p>}
+      ) : <p className="rounded border border-[#333] bg-[#141414] p-4 text-gray-400">{t("No Reels yet. Post a short video to start the feed.")}</p>}
     </section>
   );
 }

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
+import { useLanguage } from "./LanguageContext";
+import ProfileReportButton from "./ProfileReportButton";
 
 type ProfileRow = {
   display_name: string | null;
@@ -27,6 +29,15 @@ type Viewer = {
   profiles: { display_name: string | null; username: string | null; avatar_url: string | null } | null;
 };
 
+type FriendRequest = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: "pending" | "accepted" | "declined";
+};
+
+type FriendState = "loading" | "none" | "outgoing" | "incoming" | "friends";
+
 const GOLD = "#f5b301";
 const RED = "#d7261e";
 const ADULT = /(porn|xxx|xvideos|xnxx|xhamster|redtube|youporn|spankbang|chaturbate|onlyfans|fansly|brazzers|erome|rule34|hentai|camsoda|stripchat|livejasmin|bongacams)/i;
@@ -34,10 +45,11 @@ const inputCls =
   "w-full rounded border border-[#333] bg-[#1c1c1c] p-2 text-white placeholder-gray-500 outline-none focus:border-[#f5b301]";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
+  const { t } = useLanguage();
   return (
     <div className="overflow-hidden rounded border border-[#2a2a2a]">
       <div className="px-3 py-1 text-sm font-bold uppercase tracking-wider text-black" style={{ background: GOLD }}>
-        {title}
+        {t(title)}
       </div>
       <div className="space-y-1 bg-[#1c1c1c] p-3 text-sm">{children}</div>
     </div>
@@ -68,11 +80,14 @@ export default function ProfileView({
   profileId,
   session,
   onBack,
+  onMessage,
 }: {
   profileId: string;
   session: Session | null;
   onBack?: () => void;
+  onMessage?: (userId: string) => void;
 }) {
+  const { t } = useLanguage();
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [editing, setEditing] = useState(false);
@@ -87,12 +102,45 @@ export default function ProfileView({
   const [movies, setMovies] = useState("");
   const [website, setWebsite] = useState("");
   const [viewersPublic, setViewersPublic] = useState(true);
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [coverFile, setCoverFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState<"avatar" | "cover" | null>(null);
   const [msg, setMsg] = useState("");
+  const [friendState, setFriendState] = useState<FriendState>("loading");
+  const [friendRequestId, setFriendRequestId] = useState<string | null>(null);
+  const [friendBusy, setFriendBusy] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState<"feedback" | "suggestion">("feedback");
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
 
   const isOwn = !!session && session.user.id === profileId;
+
+  const loadFriendState = useCallback(async (): Promise<FriendState> => {
+    if (!session || session.user.id === profileId) {
+      setFriendState("none");
+      setFriendRequestId(null);
+      return "none";
+    }
+
+    setFriendState("loading");
+    const { data, error } = await supabase
+      .from("friend_requests")
+      .select("id, requester_id, addressee_id, status")
+      .or(`and(requester_id.eq.${session.user.id},addressee_id.eq.${profileId}),and(requester_id.eq.${profileId},addressee_id.eq.${session.user.id})`);
+    if (error) throw new Error(error.message);
+
+    const requests = (data ?? []) as FriendRequest[];
+    const accepted = requests.find((request) => request.status === "accepted");
+    const incoming = requests.find((request) =>
+      request.status === "pending" && request.requester_id === profileId);
+    const outgoing = requests.find((request) =>
+      request.status === "pending" && request.requester_id === session.user.id);
+    const current = accepted ?? incoming ?? outgoing;
+    const nextState: FriendState = accepted ? "friends" : incoming ? "incoming" : outgoing ? "outgoing" : "none";
+    setFriendRequestId(current?.id ?? null);
+    setFriendState(nextState);
+    return nextState;
+  }, [profileId, session]);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase
@@ -131,11 +179,77 @@ export default function ProfileView({
       try {
         await load();
       } catch (error) {
-        setMsg(error instanceof Error ? error.message : "Could not load profile.");
+        setMsg(error instanceof Error ? error.message : t("Could not load profile."));
       }
     }
     run();
-  }, [profileId, session, load]);
+  }, [profileId, session, load, t]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadFriendState().catch((error: unknown) => {
+        setFriendState("none");
+        setMsg(error instanceof Error ? error.message : t("Could not load friend status."));
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadFriendState, t]);
+
+  async function sendFriendRequest() {
+    if (!session || friendBusy) return;
+    setFriendBusy(true);
+    setMsg("");
+    try {
+      const { error } = await supabase.rpc("create_friend_request", { target_user: profileId });
+      if (error) throw new Error(error.message);
+      const nextState = await loadFriendState();
+      setMsg(t(nextState === "friends"
+        ? "Friend request accepted. You are now friends."
+        : "Friend request sent."));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : t("Could not send friend request."));
+    } finally {
+      setFriendBusy(false);
+    }
+  }
+
+  async function respondToFriendRequest(accept: boolean) {
+    if (!friendRequestId || friendBusy) return;
+    setFriendBusy(true);
+    setMsg("");
+    try {
+      const { error } = await supabase.rpc("respond_friend_request", {
+        target_request: friendRequestId,
+        accept_request: accept,
+      });
+      if (error) throw new Error(error.message);
+      await loadFriendState();
+      setMsg(t(accept ? "Friend request accepted. You are now friends." : "Friend request declined."));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : t("Could not update friend request."));
+    } finally {
+      setFriendBusy(false);
+    }
+  }
+
+  async function submitFeedback(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session || feedbackBusy || !feedbackText.trim()) return;
+    setFeedbackBusy(true);
+    setFeedbackMessage("");
+    const { error } = await supabase.from("profile_feedback").insert({
+      user_id: session.user.id,
+      category: feedbackCategory,
+      content: feedbackText.trim(),
+    });
+    if (error) {
+      setFeedbackMessage(error.message);
+    } else {
+      setFeedbackText("");
+      setFeedbackMessage(t("Thanks for helping improve OpenVoice."));
+    }
+    setFeedbackBusy(false);
+  }
 
   function startEdit() {
     setName(profile?.display_name ?? "");
@@ -149,10 +263,30 @@ export default function ProfileView({
     setMovies(profile?.favorite_movies ?? "");
     setWebsite(profile?.website ?? "");
     setViewersPublic(profile?.viewers_public ?? true);
-    setAvatarFile(null);
-    setCoverFile(null);
     setMsg("");
     setEditing(true);
+  }
+
+  async function changeProfilePhoto(event: React.ChangeEvent<HTMLInputElement>, field: "avatar_url" | "cover_url") {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!session || !file || photoBusy) return;
+    setPhotoBusy(field === "avatar_url" ? "avatar" : "cover");
+    setMsg("");
+    try {
+      const imageUrl = await uploadImage(session.user.id, file);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ [field]: imageUrl })
+        .eq("id", session.user.id);
+      if (error) throw new Error(error.message);
+      await load();
+      setMsg(t(field === "avatar_url" ? "Profile photo updated." : "Cover photo updated."));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : t("Could not update photo."));
+    } finally {
+      setPhotoBusy(null);
+    }
   }
 
   async function save() {
@@ -172,11 +306,6 @@ export default function ProfileView({
         if (ADULT.test(host)) throw new Error("That kind of link is not allowed on OpenVoice.");
       }
 
-      let avatarUrl = profile?.avatar_url ?? null;
-      let coverUrl = profile?.cover_url ?? null;
-      if (avatarFile) avatarUrl = await uploadImage(session.user.id, avatarFile);
-      if (coverFile) coverUrl = await uploadImage(session.user.id, coverFile);
-
       const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
       const { error } = await supabase
         .from("profiles")
@@ -191,8 +320,6 @@ export default function ProfileView({
           favorite_music: music.trim() || null,
           favorite_movies: movies.trim() || null,
           website: site || null,
-          avatar_url: avatarUrl,
-          cover_url: coverUrl,
           viewers_public: viewersPublic,
         })
         .eq("id", session.user.id);
@@ -200,17 +327,17 @@ export default function ProfileView({
       setEditing(false);
       await load();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not save.");
+      setMsg(e instanceof Error ? e.message : t("Could not save."));
     } finally {
       setSaving(false);
     }
   }
 
   if (!profile) {
-    return <p className={msg ? "text-sm text-red-500" : "text-gray-400"}>{msg || "Loading profile..."}</p>;
+    return <p className={msg ? "text-sm text-red-500" : "text-gray-400"}>{msg || t("Loading profile...")}</p>;
   }
 
-  const shownName = profile.display_name || profile.username || "No name yet";
+  const shownName = profile.display_name || profile.username || t("No name yet");
   const initial = shownName.charAt(0).toUpperCase();
   const hasBasic = !!(profile.hometown || profile.relationship_status || profile.looking_for || profile.website);
   const safeSite = profile.website && /^https?:\/\//i.test(profile.website) ? profile.website : null;
@@ -219,35 +346,72 @@ export default function ProfileView({
     <div className="overflow-hidden rounded-lg border border-[#2a2a2a] bg-[#141414]">
       {onBack && (
         <button onClick={onBack} className="p-3 text-sm text-gray-400 hover:text-white">
-          ← Back
+          ← {t("Back")}
         </button>
       )}
 
       <div
-        className="h-36 w-full bg-cover bg-center"
+        className="relative h-52 w-full bg-cover bg-center sm:h-60"
         style={{
           backgroundColor: "#1c1c1c",
           backgroundImage: profile.cover_url
             ? "url('" + profile.cover_url + "')"
             : "linear-gradient(135deg, " + GOLD + ", " + RED + ")",
         }}
-      />
+      >
+        {isOwn && !editing && (
+          <label className="absolute bottom-3 right-3 inline-flex cursor-pointer items-center gap-2 rounded-full border border-white/20 bg-black/75 px-3 py-2 text-sm font-semibold text-white hover:bg-black">
+            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 4h-4L8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z" />
+              <circle cx="12" cy="13" r="3" />
+            </svg>
+            {photoBusy === "cover" ? t("Uploading...") : t("Change cover")}
+            <input
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              aria-label={t("Change cover")}
+              disabled={photoBusy !== null}
+              onChange={(event) => void changeProfilePhoto(event, "cover_url")}
+            />
+          </label>
+        )}
+      </div>
 
       <div className="px-4 pb-4">
-        <div className="-mt-12 flex items-end justify-between">
-          {profile.avatar_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={profile.avatar_url} alt=""
-              className="h-24 w-24 rounded-full border-4 border-[#141414] object-cover" />
-          ) : (
-            <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-[#141414] text-4xl font-bold text-black"
-              style={{ background: GOLD }}>
-              {initial}
-            </div>
-          )}
+        <div className="-mt-16 flex items-end justify-between">
+          <div className="relative">
+            {profile.avatar_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={profile.avatar_url} alt=""
+                className="h-32 w-32 rounded-full border-4 border-[#141414] object-cover sm:h-36 sm:w-36" />
+            ) : (
+              <div className="flex h-32 w-32 items-center justify-center rounded-full border-4 border-[#141414] text-5xl font-bold text-black sm:h-36 sm:w-36"
+                style={{ background: GOLD }}>
+                {initial}
+              </div>
+            )}
+            {isOwn && !editing && (
+              <label className="absolute bottom-1 right-1 inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-2 border-[#141414] bg-[#f5b301] text-black shadow-lg hover:bg-[#ffca28]">
+                <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 4h-4L8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z" />
+                  <circle cx="12" cy="13" r="3" />
+                </svg>
+                <span className="sr-only">{t("Change profile photo")}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  aria-label={t("Change profile photo")}
+                  disabled={photoBusy !== null}
+                  onChange={(event) => void changeProfilePhoto(event, "avatar_url")}
+                />
+              </label>
+            )}
+          </div>
           {isOwn && !editing && (
             <button onClick={startEdit} className="rounded border border-[#555] px-4 py-2 text-sm font-semibold">
-              Edit profile
+              {t("Edit profile")}
             </button>
           )}
         </div>
@@ -259,11 +423,74 @@ export default function ProfileView({
                 {shownName}
                 {profile.is_admin && (
                   <span className="ml-2 rounded px-2 py-0.5 align-middle text-xs text-white" style={{ background: RED }}>
-                    ADMIN
+                    {t("ADMIN")}
                   </span>
                 )}
               </h2>
               {profile.username && <p className="text-sm text-gray-400">@{profile.username}</p>}
+              {!isOwn && session && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {friendState === "loading" && (
+                    <span className="rounded border border-[#555] px-4 py-2 text-sm text-gray-400">
+                      {t("Checking friend status...")}
+                    </span>
+                  )}
+                  {friendState === "none" && (
+                    <button
+                      onClick={() => void sendFriendRequest()}
+                      disabled={friendBusy}
+                      className="rounded px-4 py-2 text-sm font-bold text-black disabled:opacity-50"
+                      style={{ background: GOLD }}
+                    >
+                      {friendBusy ? t("Please wait...") : t("Add friend")}
+                    </button>
+                  )}
+                  {friendState === "outgoing" && (
+                    <span className="rounded border border-[#555] px-4 py-2 text-sm text-gray-300">
+                      {t("Friend request sent")}
+                    </span>
+                  )}
+                  {friendState === "incoming" && (
+                    <>
+                      <button
+                        onClick={() => void respondToFriendRequest(true)}
+                        disabled={friendBusy}
+                        className="rounded px-4 py-2 text-sm font-bold text-black disabled:opacity-50"
+                        style={{ background: GOLD }}
+                      >
+                        {t("Accept request")}
+                      </button>
+                      <button
+                        onClick={() => void respondToFriendRequest(false)}
+                        disabled={friendBusy}
+                        className="rounded border border-[#555] px-4 py-2 text-sm disabled:opacity-50"
+                      >
+                        {t("Decline")}
+                      </button>
+                    </>
+                  )}
+                  {friendState === "friends" && (
+                    <>
+                      <span className="rounded border border-[#555] px-4 py-2 text-sm text-gray-300">
+                        {t("Friends")}
+                      </span>
+                      {onMessage && (
+                        <button
+                          onClick={() => onMessage(profileId)}
+                          className="rounded px-4 py-2 text-sm font-bold text-black"
+                          style={{ background: GOLD }}
+                        >
+                          {t("Message")}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {!isOwn && session && (
+                <ProfileReportButton profileId={profileId} session={session} />
+              )}
+              {msg && !editing && <p role="status" className="mt-2 text-sm text-gray-300">{t(msg)}</p>}
             </div>
 
             {profile.bio && (
@@ -274,12 +501,12 @@ export default function ProfileView({
 
             {hasBasic && (
               <Section title="Basic info">
-                <Row label="Hometown" value={profile.hometown} />
-                <Row label="Relationship status" value={profile.relationship_status} />
-                <Row label="Looking for" value={profile.looking_for} />
+                <Row label={t("Hometown")} value={profile.hometown} />
+                <Row label={t("Relationship status")} value={profile.relationship_status} />
+                <Row label={t("Looking for")} value={profile.looking_for} />
                 {safeSite && (
                   <p className="break-all">
-                    <span className="text-gray-400">Website: </span>
+                    <span className="text-gray-400">{t("Website")}: </span>
                     <a href={safeSite} target="_blank" rel="noopener noreferrer nofollow" style={{ color: GOLD }}>
                       {safeSite}
                     </a>
@@ -305,70 +532,60 @@ export default function ProfileView({
             )}
 
             {isOwn && !profile.bio && !hasBasic && !profile.interests && (
-              <p className="text-sm text-gray-400">Tap Edit profile to fill in your page.</p>
+              <p className="text-sm text-gray-400">{t("Tap Edit profile to fill in your page.")}</p>
             )}
           </div>
         ) : (
           <div className="mt-3 space-y-2">
-            <input className={inputCls} placeholder="Display name" value={name}
+            <input className={inputCls} placeholder={t("Display name")} value={name}
               onChange={(e) => setName(e.target.value)} />
-            <input className={inputCls} placeholder="Username (letters, numbers, _)" value={username}
+            <input className={inputCls} placeholder={t("Username (letters, numbers, _)")} value={username}
               onChange={(e) => setUsername(e.target.value)} />
-            <textarea className={inputCls} rows={3} placeholder="About me" value={bio}
+            <textarea className={inputCls} rows={3} placeholder={t("About me")} value={bio}
               onChange={(e) => setBio(e.target.value)} />
-            <input className={inputCls} placeholder="Hometown (city, state only)" value={hometown}
+            <input className={inputCls} placeholder={t("Hometown (city, state only)")} value={hometown}
               onChange={(e) => setHometown(e.target.value)} />
-            <input className={inputCls} placeholder="Relationship status" value={relationship}
+            <input className={inputCls} placeholder={t("Relationship status")} value={relationship}
               onChange={(e) => setRelationship(e.target.value)} />
-            <input className={inputCls} placeholder="Looking for (friendship, networking, dating...)" value={lookingFor}
+            <input className={inputCls} placeholder={t("Looking for (friendship, networking, dating...)")} value={lookingFor}
               onChange={(e) => setLookingFor(e.target.value)} />
-            <textarea className={inputCls} rows={2} placeholder="Interests" value={interests}
+            <textarea className={inputCls} rows={2} placeholder={t("Interests")} value={interests}
               onChange={(e) => setInterests(e.target.value)} />
-            <textarea className={inputCls} rows={2} placeholder="Favorite music" value={music}
+            <textarea className={inputCls} rows={2} placeholder={t("Favorite music")} value={music}
               onChange={(e) => setMusic(e.target.value)} />
-            <textarea className={inputCls} rows={2} placeholder="Favorite movies" value={movies}
+            <textarea className={inputCls} rows={2} placeholder={t("Favorite movies")} value={movies}
               onChange={(e) => setMovies(e.target.value)} />
-            <input className={inputCls} placeholder="Website" value={website}
+            <input className={inputCls} placeholder={t("Website")} value={website}
               onChange={(e) => setWebsite(e.target.value)} />
-            <label className="block text-sm text-gray-400">
-              Profile photo
-              <input type="file" accept="image/*" className="mt-1 block text-sm"
-                onChange={(e) => setAvatarFile(e.target.files?.[0] ?? null)} />
-            </label>
-            <label className="block text-sm text-gray-400">
-              Cover photo
-              <input type="file" accept="image/*" className="mt-1 block text-sm"
-                onChange={(e) => setCoverFile(e.target.files?.[0] ?? null)} />
-            </label>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={viewersPublic}
                 onChange={(e) => setViewersPublic(e.target.checked)} />
-              Let everyone see who viewed my profile
+              {t("Let everyone see who viewed my profile")}
             </label>
             <p className="text-xs" style={{ color: RED }}>
-              No nudity. Photos that break this rule get removed and the account can be banned.
+              {t("No nudity. Photos that break this rule get removed and the account can be banned.")}
             </p>
             <div className="flex gap-2">
               <button onClick={save} disabled={saving}
                 className="rounded px-5 py-2 font-bold text-black disabled:opacity-50" style={{ background: GOLD }}>
-                {saving ? "Saving..." : "Save"}
+                {saving ? t("Saving...") : t("Save")}
               </button>
               <button onClick={() => setEditing(false)} className="rounded border border-[#555] px-5 py-2">
-                Cancel
+                {t("Cancel")}
               </button>
             </div>
-            {msg && <p className="text-sm text-red-500">{msg}</p>}
+            {msg && <p className="text-sm text-red-500">{t(msg)}</p>}
           </div>
         )}
 
         <div className="mt-6 border-t border-[#2a2a2a] pt-4">
           <h3 className="mb-2 text-sm font-bold uppercase tracking-wider" style={{ color: GOLD }}>
-            Who viewed this profile
+            {t("Who viewed this profile")}
           </h3>
           {!isOwn && profile.viewers_public === false ? (
-            <p className="text-sm text-gray-400">This person keeps their viewers private.</p>
+            <p className="text-sm text-gray-400">{t("This person keeps their viewers private.")}</p>
           ) : viewers.length === 0 ? (
-            <p className="text-sm text-gray-400">No views yet.</p>
+            <p className="text-sm text-gray-400">{t("No views yet.")}</p>
           ) : (
             <ul className="space-y-2">
               {viewers.map((v) => (
@@ -391,6 +608,56 @@ export default function ProfileView({
             </ul>
           )}
         </div>
+
+        {msg && !editing && <p role="status" className="mt-3 text-sm text-gray-300">{t(msg)}</p>}
+
+        {isOwn && !profile.is_admin && (
+          <form onSubmit={submitFeedback} className="mt-6 space-y-3 border-t border-[#2a2a2a] pt-4">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wider" style={{ color: GOLD }}>
+                {t("Feedback or suggestion")}
+              </h3>
+              <p className="mt-1 text-sm text-gray-400">
+                {t("Tell us what you would change or what you would like added.")}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {(["feedback", "suggestion"] as const).map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => setFeedbackCategory(category)}
+                  aria-pressed={feedbackCategory === category}
+                  className="rounded border px-3 py-2 text-sm"
+                  style={{
+                    borderColor: feedbackCategory === category ? GOLD : "#555",
+                    color: feedbackCategory === category ? GOLD : "#d1d5db",
+                  }}
+                >
+                  {t(category === "feedback" ? "Feedback" : "Suggestion")}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className={inputCls}
+              rows={4}
+              maxLength={2000}
+              required
+              value={feedbackText}
+              onChange={(event) => setFeedbackText(event.target.value)}
+              placeholder={t("Write your feedback or suggestion...")}
+            />
+            <button
+              type="submit"
+              disabled={feedbackBusy || !feedbackText.trim()}
+              className="rounded px-4 py-2 text-sm font-bold text-black disabled:opacity-50"
+              style={{ background: GOLD }}
+            >
+              {feedbackBusy ? t("Sending...") : t("Send feedback")}
+            </button>
+            {feedbackMessage && <p role="status" className="text-sm text-gray-300">{t(feedbackMessage)}</p>}
+          </form>
+        )}
       </div>
     </div>
   );

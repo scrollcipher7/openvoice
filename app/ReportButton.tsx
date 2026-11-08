@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
+import { useLanguage } from "./LanguageContext";
 
 const REASONS = [
   "Nudity or sexual content",
@@ -18,6 +19,7 @@ export default function ReportButton({
   postId: number;
   session: Session;
 }) {
+  const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState(REASONS[0]);
   const [msg, setMsg] = useState("");
@@ -40,13 +42,13 @@ export default function ReportButton({
     setMsg("Thanks. An admin will review it.");
   }
 
-  if (done) return <p className="text-xs text-gray-400">{msg}</p>;
+  if (done) return <p className="text-xs text-gray-400">{t(msg)}</p>;
 
   return (
     <div className="text-xs">
       {!open ? (
         <button onClick={() => setOpen(true)} className="text-gray-500 hover:text-red-500">
-          🚩 Report
+          🚩 {t("Report")}
         </button>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
@@ -56,8 +58,8 @@ export default function ReportButton({
             className="rounded border border-[#333] bg-[#1c1c1c] p-1 text-white"
           >
             {REASONS.map((r) => (
-              <option key={r} value={r}>
-                {r}
+              <option key=              {t(r)} value={r}>
+                {t(r)}
               </option>
             ))}
           </select>
@@ -66,14 +68,14 @@ export default function ReportButton({
             className="rounded px-3 py-1 font-bold text-white"
             style={{ background: "#d7261e" }}
           >
-            Send report
+            {t("Send report")}
           </button>
           <button onClick={() => setOpen(false)} className="text-gray-400">
-            Cancel
+            {t("Cancel")}
           </button>
         </div>
       )}
-      {msg && <p className="mt-1 text-red-500">{msg}</p>}
+      {msg && <p className="mt-1 text-red-500">{t(msg)}</p>}
     </div>
   );
 }

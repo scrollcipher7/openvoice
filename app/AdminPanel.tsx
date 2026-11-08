@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import DatingSelfieReview from "./DatingSelfieReview";
+import { useLanguage } from "./LanguageContext";
 
 type Report = {
   id: number;
@@ -28,12 +29,41 @@ type Banned = {
   username: string | null;
 };
 
+type Feedback = {
+  id: number;
+  user_id: string;
+  category: "feedback" | "suggestion";
+  content: string;
+  created_at: string;
+  profiles: { display_name: string | null; username: string | null } | null;
+};
+
+type ProfileReport = {
+  id: number;
+  reporter_id: string;
+  reported_user_id: string;
+  reason: string;
+  details: string | null;
+  created_at: string;
+  reporter: { display_name: string | null; username: string | null } | null;
+  reported: { display_name: string | null; username: string | null } | null;
+};
+
 const GOLD = "#f5b301";
 const RED = "#d7261e";
 
-export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
+export default function AdminPanel({
+  isAdmin,
+  onMessageReportedProfile,
+}: {
+  isAdmin: boolean;
+  onMessageReportedProfile: (userId: string) => void;
+}) {
+  const { language, t } = useLanguage();
   const [reports, setReports] = useState<Report[]>([]);
+  const [profileReports, setProfileReports] = useState<ProfileReport[]>([]);
   const [banned, setBanned] = useState<Banned[]>([]);
+  const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
@@ -47,15 +77,31 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
       .order("created_at", { ascending: false });
     if (reportsError) throw new Error(reportsError.message);
 
+    const { data: pr, error: profileReportsError } = await supabase
+      .from("profile_reports")
+      .select("id, reporter_id, reported_user_id, reason, details, created_at, reporter:profiles!profile_reports_reporter_id_fkey(display_name, username), reported:profiles!profile_reports_reported_user_id_fkey(display_name, username)")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    if (profileReportsError) throw new Error(profileReportsError.message);
+
     const { data: b, error: bannedError } = await supabase
       .from("profiles")
       .select("id, display_name, username")
       .eq("is_banned", true);
     if (bannedError) throw new Error(bannedError.message);
 
+    const { data: f, error: feedbackError } = await supabase
+      .from("profile_feedback")
+      .select("id, user_id, category, content, created_at, profiles!profile_feedback_user_id_fkey(display_name, username)")
+      .eq("status", "open")
+      .order("created_at", { ascending: false });
+    if (feedbackError) throw new Error(feedbackError.message);
+
     return {
       reports: (r as unknown as Report[]) ?? [],
+      profileReports: (pr as unknown as ProfileReport[]) ?? [],
       banned: (b as Banned[]) ?? [],
+      feedback: (f as unknown as Feedback[]) ?? [],
     };
   }, [isAdmin]);
 
@@ -67,7 +113,9 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
       .then((data) => {
         if (!cancelled && data) {
           setReports(data.reports);
+          setProfileReports(data.profileReports);
           setBanned(data.banned);
+          setFeedback(data.feedback);
         }
       })
       .catch((error: unknown) => {
@@ -84,7 +132,9 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
       const data = await load();
       if (data) {
         setReports(data.reports);
+        setProfileReports(data.profileReports);
         setBanned(data.banned);
+        setFeedback(data.feedback);
       }
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "Could not load admin data.");
@@ -108,13 +158,34 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
     refresh();
   }
 
+  async function dismissProfileReport(reportId: number) {
+    setMsg("");
+    const { error } = await supabase.from("profile_reports")
+      .update({ status: "dismissed" })
+      .eq("id", reportId);
+    if (error) return setMsg(error.message);
+    await refresh();
+  }
+
+  async function messageReportedMember(userId: string) {
+    setMsg("");
+    const { error } = await supabase.rpc("create_moderation_conversation", {
+      target_user: userId,
+    });
+    if (error) {
+      setMsg(error.message);
+      return;
+    }
+    onMessageReportedProfile(userId);
+  }
+
   async function banAndRemove(userId: string, postId: number) {
     setMsg("");
     const { error: banError } = await supabase.rpc("set_ban", { target: userId, banned: true });
     if (banError) return setMsg(banError.message);
     const { error: deleteError } = await supabase.from("posts").delete().eq("id", postId);
     if (deleteError) {
-      setMsg(`User was banned, but removing the post failed: ${deleteError.message}`);
+      setMsg(`${t("User was banned, but removing the post failed:")} ${deleteError.message}`);
       refresh();
       return;
     }
@@ -128,33 +199,117 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
     refresh();
   }
 
+  async function resolveFeedback(feedbackId: number) {
+    setMsg("");
+    const { error } = await supabase.from("profile_feedback")
+      .update({ status: "resolved" })
+      .eq("id", feedbackId);
+    if (error) return setMsg(error.message);
+    refresh();
+  }
+
   if (!isAdmin) return null;
 
   return (
     <div className="space-y-4 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
       <DatingSelfieReview />
       <h2 className="text-xl font-bold uppercase tracking-wider" style={{ color: GOLD }}>
-        Admin: reports ({reports.length})
+        {t("Feedback and suggestions")} ({feedback.length})
       </h2>
-      {msg && <p className="text-sm text-red-500">{msg}</p>}
+      {feedback.length === 0 ? (
+        <p className="text-sm text-gray-400">{t("No open feedback or suggestions.")}</p>
+      ) : (
+        <ul className="space-y-2">
+          {feedback.map((item) => (
+            <li key={item.id} className="space-y-2 rounded border border-[#333] bg-[#1c1c1c] p-3">
+              <div className="flex items-center justify-between gap-2 text-xs text-gray-400">
+                <span>
+                  {t(item.category === "feedback" ? "Feedback" : "Suggestion")} ·{" "}
+                  {item.profiles?.display_name || item.profiles?.username || item.user_id.slice(0, 8)}
+                </span>
+                <time>{new Date(item.created_at).toLocaleString(language === "es" ? "es-US" : "en-US")}</time>
+              </div>
+              <p className="whitespace-pre-wrap break-words text-sm">{item.content}</p>
+              <button
+                onClick={() => void resolveFeedback(item.id)}
+                className="rounded border border-[#555] px-3 py-1 text-sm"
+              >
+                {t("Mark resolved")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h2 className="text-xl font-bold uppercase tracking-wider" style={{ color: GOLD }}>
+        {t("Admin: reports")} ({reports.length})
+      </h2>
+      {msg && <p className="text-sm text-red-500">{t(msg)}</p>}
 
-      {reports.length === 0 && <p className="text-sm text-gray-400">No open reports.</p>}
+      {reports.length === 0 && <p className="text-sm text-gray-400">{t("No open reports.")}</p>}
+
+      <h3 className="text-lg font-bold uppercase tracking-wider" style={{ color: GOLD }}>
+        {t("Profile reports")} ({profileReports.length})
+      </h3>
+      {profileReports.length === 0 ? (
+        <p className="text-sm text-gray-400">{t("No open profile reports.")}</p>
+      ) : (
+        <ul className="space-y-2">
+          {profileReports.map((report) => (
+            <li key={report.id} className="space-y-2 rounded border border-[#333] bg-[#1c1c1c] p-3">
+              <p className="text-sm">
+                <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: RED }}>
+                  {t(report.reason)}
+                </span>{" "}
+                <time className="text-xs text-gray-500">
+                  {new Date(report.created_at).toLocaleString(language === "es" ? "es-US" : "en-US")}
+                </time>
+              </p>
+              <p className="text-sm text-gray-300">
+                {t("Reported member:")}{" "}
+                <span className="font-semibold text-white">
+                  {report.reported?.display_name || report.reported?.username || report.reported_user_id.slice(0, 8)}
+                </span>
+              </p>
+              <p className="text-xs text-gray-400">
+                {t("Reported by:")}{" "}
+                {report.reporter?.display_name || report.reporter?.username || report.reporter_id.slice(0, 8)}
+              </p>
+              {report.details && <p className="whitespace-pre-wrap break-words text-sm">{report.details}</p>}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => void messageReportedMember(report.reported_user_id)}
+                  className="rounded px-3 py-1 text-sm font-bold text-black"
+                  style={{ background: GOLD }}
+                >
+                  {t("Message member")}
+                </button>
+                <button
+                  onClick={() => void dismissProfileReport(report.id)}
+                  className="rounded border border-[#555] px-3 py-1 text-sm"
+                >
+                  {t("Dismiss")}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {reports.map((r) => (
         <div key={r.id} className="space-y-2 rounded border border-[#333] bg-[#1c1c1c] p-3">
           <p className="text-sm">
             <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: RED }}>
-              {r.reason}
+              {t(r.reason)}
             </span>{" "}
-            <span className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</span>
+            <span className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString(language === "es" ? "es-US" : "en-US")}</span>
           </p>
 
           {r.posts ? (
             <>
               <p className="text-sm text-gray-400">
-                Posted by{" "}
+                {t("Posted by")}{" "}
                 <span className="font-semibold text-white">
-                  {r.posts.profiles?.display_name || r.posts.profiles?.username || "Anonymous"}
+                  {r.posts.profiles?.display_name || r.posts.profiles?.username || t("Anonymous")}
                 </span>
               </p>
               {r.posts.content && (
@@ -173,36 +328,36 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
               <div className="flex flex-wrap gap-2 pt-1">
                 <button onClick={() => removePost(r.posts!.id)}
                   className="rounded px-3 py-1 text-sm font-bold text-white" style={{ background: RED }}>
-                  Remove post
+                  {t("Remove post")}
                 </button>
                 <button onClick={() => banAndRemove(r.posts!.user_id, r.posts!.id)}
                   className="rounded border border-red-500 px-3 py-1 text-sm font-bold text-red-500">
-                  Remove + ban user
+                  {t("Remove + ban user")}
                 </button>
                 <button onClick={() => dismiss(r.id)}
                   className="rounded border border-[#555] px-3 py-1 text-sm">
-                  Dismiss
+                  {t("Dismiss")}
                 </button>
               </div>
             </>
           ) : (
-            <p className="text-sm text-gray-500">This post was already removed.</p>
+            <p className="text-sm text-gray-500">{t("This post was already removed.")}</p>
           )}
         </div>
       ))}
 
       <h3 className="pt-2 text-sm font-bold uppercase tracking-wider" style={{ color: GOLD }}>
-        Banned accounts ({banned.length})
+        {t("Banned accounts")} ({banned.length})
       </h3>
       {banned.length === 0 ? (
-        <p className="text-sm text-gray-400">Nobody is banned.</p>
+        <p className="text-sm text-gray-400">{t("Nobody is banned.")}</p>
       ) : (
         <ul className="space-y-2">
           {banned.map((b) => (
             <li key={b.id} className="flex items-center justify-between text-sm">
               <span>{b.display_name || b.username || b.id.slice(0, 8)}</span>
               <button onClick={() => unban(b.id)} className="rounded border border-[#555] px-3 py-1">
-                Unban
+                {t("Unban")}
               </button>
             </li>
           ))}
