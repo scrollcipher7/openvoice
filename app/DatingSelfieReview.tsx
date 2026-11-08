@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import DatingSelfieCall from "./DatingSelfieCall";
 
 type CheckRequest = {
   user_id: string;
@@ -10,12 +9,9 @@ type CheckRequest = {
   username: string | null;
   avatar_url: string | null;
   requested_at: string;
-  status: "requested" | "in_progress";
-};
-
-type VerificationState = {
-  user_id: string;
-  status: "requested" | "in_progress";
+  selfie_path: string;
+  status: "requested" | "selfie_checked" | "rejected";
+  selfie_url: string | null;
 };
 
 const GOLD = "#f5b301";
@@ -23,12 +19,10 @@ const GOLD = "#f5b301";
 export default function DatingSelfieReview() {
   const [requests, setRequests] = useState<CheckRequest[]>([]);
   const [activeRequest, setActiveRequest] = useState<CheckRequest | null>(null);
-  const [connected, setConnected] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const markConnected = useCallback(() => setConnected(true), []);
 
   const loadRequests = useCallback(async () => {
     setError("");
@@ -38,54 +32,62 @@ export default function DatingSelfieReview() {
       return;
     }
 
-    const queue = (data ?? []) as Omit<CheckRequest, "status">[];
-    if (!queue.length) {
-      setRequests([]);
-      setActiveRequest(null);
-      setConnected(false);
-      return;
-    }
-
-    const { data: states, error: statesError } = await supabase
-      .from("dating_verifications")
-      .select("user_id, status")
-      .in("user_id", queue.map((request) => request.user_id));
-    if (statesError) {
-      setError(`Could not refresh selfie-check statuses: ${statesError.message}`);
-      return;
-    }
-
-    const statusByUser = new Map(
-      ((states ?? []) as VerificationState[]).map((state) => [state.user_id, state.status])
-    );
-    const refreshedQueue: CheckRequest[] = [];
+    const queue = (data ?? []) as Omit<CheckRequest, "selfie_url">[];
+    const signedRequests: CheckRequest[] = [];
     for (const request of queue) {
-      const status = statusByUser.get(request.user_id);
-      if (status !== "requested" && status !== "in_progress") {
-        setError("Could not determine the current status for a selfie-check request. Please refresh again.");
+      if (request.status !== "requested") {
+        signedRequests.push({ ...request, selfie_url: null });
+        continue;
+      }
+      const { data: signedUrl, error: signedUrlError } = await supabase.storage
+        .from("dating-selfies")
+        .createSignedUrl(request.selfie_path, 300);
+      if (signedUrlError) {
+        setError(`Could not open a private selfie for review: ${signedUrlError.message}`);
         return;
       }
-      refreshedQueue.push({ ...request, status });
+      signedRequests.push({ ...request, selfie_url: signedUrl.signedUrl });
     }
 
-    setRequests(refreshedQueue);
+    setRequests(signedRequests);
     if (activeRequest) {
-      const updatedRequest = refreshedQueue.find((request) => request.user_id === activeRequest.user_id);
-      if (!updatedRequest || updatedRequest.status !== "in_progress") {
-        setActiveRequest(null);
-        setConnected(false);
-      } else {
-        setActiveRequest(updatedRequest);
-      }
+      const updatedRequest = signedRequests.find((request) =>
+        request.user_id === activeRequest.user_id && request.status === "requested");
+      setActiveRequest(updatedRequest ?? null);
     }
   }, [activeRequest]);
+
+  async function deleteReviewedSelfie(request: CheckRequest): Promise<string | null> {
+    const { error: deleteError } = await supabase.storage.from("dating-selfies").remove([request.selfie_path]);
+    if (deleteError) {
+      const pathParts = request.selfie_path.split("/");
+      const filename = pathParts.pop();
+      const folder = pathParts.join("/");
+      if (!filename || !folder) return "The private selfie path is invalid.";
+      const { data: files, error: listError } = await supabase.storage
+        .from("dating-selfies")
+        .list(folder, { search: filename });
+      if (listError) {
+        return `Could not delete the private selfie: ${deleteError.message}. Could not confirm whether it remains stored: ${listError.message}`;
+      }
+      if (files.some((file) => file.name === filename)) {
+        return `Could not delete the private selfie: ${deleteError.message}`;
+      }
+    }
+
+    const { error: clearError } = await supabase.rpc("clear_dating_verification_selfie", {
+      target_user: request.user_id,
+      selfie_object_path: request.selfie_path,
+    });
+    return clearError?.message ?? null;
+  }
 
   async function refreshRequests() {
     setRefreshing(true);
     try {
       await loadRequests();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not refresh selfie-check requests.");
+      setError(cause instanceof Error ? cause.message : "Could not refresh selfie-review requests.");
     } finally {
       setRefreshing(false);
     }
@@ -100,29 +102,8 @@ export default function DatingSelfieReview() {
     };
   }, [loadRequests]);
 
-  async function startCheck(request: CheckRequest) {
-    setError("");
-    setNotice("");
-    setBusy(true);
-    if (request.status === "requested") {
-      const { error: resultError } = await supabase.rpc("start_dating_selfie_check", {
-        target_user: request.user_id,
-      });
-      if (resultError) {
-        setError(resultError.message);
-        setBusy(false);
-        await refreshRequests();
-        return;
-      }
-    }
-    setActiveRequest(request);
-    setConnected(false);
-    setBusy(false);
-    await loadRequests();
-  }
-
   async function reviewCheck(approved: boolean) {
-    if (!activeRequest || !connected) return;
+    if (!activeRequest || busy) return;
     setError("");
     setNotice("");
     setBusy(true);
@@ -135,29 +116,27 @@ export default function DatingSelfieReview() {
       setBusy(false);
       return;
     }
-    setNotice(approved ? "Marked Selfie checked. This does not verify the person's name or age." : "Selfie check rejected.");
+
+    const cleanupError = await deleteReviewedSelfie(activeRequest);
+    if (cleanupError) setError(`The review was saved, but selfie cleanup is still pending: ${cleanupError}`);
+    else setNotice(approved
+      ? "Selfie photo checked. This does not verify the person's identity or age."
+      : "Selfie photo review rejected. The uploaded selfie was deleted.");
     setActiveRequest(null);
-    setConnected(false);
     setBusy(false);
     await loadRequests();
   }
 
-  async function returnToQueue() {
-    if (!activeRequest) return;
+  async function retryCleanup(request: CheckRequest) {
+    if (busy) return;
     setError("");
+    setNotice("");
     setBusy(true);
-    const { error: resultError } = await supabase.rpc("release_dating_selfie_check", {
-      target_user: activeRequest.user_id,
-    });
-    if (resultError) {
-      setError(resultError.message);
-      setBusy(false);
-      return;
-    }
-    setActiveRequest(null);
-    setConnected(false);
+    const cleanupError = await deleteReviewedSelfie(request);
+    if (cleanupError) setError(`Selfie cleanup is still pending: ${cleanupError}`);
+    else setNotice("The private selfie was deleted.");
     setBusy(false);
-    await loadRequests();
+    if (!cleanupError) await loadRequests();
   }
 
   return (
@@ -174,42 +153,46 @@ export default function DatingSelfieReview() {
         </button>
       </div>
       <p className="text-sm text-gray-400">
-        Review a live camera feed and compare it with the account photo when available. OpenVoice does not record or store video, but cannot prevent capture outside the app. This is a human selfie check, not face recognition, identity verification, or proof of age.
+        Compare the submitted private selfie photo with the account photo when available. This is a manual visual check, not face recognition, identity verification, or proof of age.
       </p>
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="text-sm text-yellow-100">{notice}</p>}
 
       {activeRequest ? (
         <div className="space-y-3 rounded border border-[#444] p-3">
-          <div className="flex flex-wrap items-center gap-3">
-            {activeRequest.avatar_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={activeRequest.avatar_url} alt="Current account profile photo" className="h-20 w-20 rounded-full object-cover" />
-            )}
+          <div className="flex flex-wrap items-start gap-4">
             <div>
+              <p className="mb-2 text-sm text-gray-300">Submitted selfie</p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={activeRequest.selfie_url ?? ""} alt="Private submitted selfie" className="h-52 w-40 rounded object-cover" />
+            </div>
+            <div>
+              <p className="mb-2 text-sm text-gray-300">OpenVoice profile photo</p>
+              {activeRequest.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={activeRequest.avatar_url} alt="Current account profile photo" className="h-52 w-40 rounded object-cover" />
+              ) : (
+                <p className="flex h-52 w-40 items-center justify-center rounded bg-[#222] p-3 text-center text-sm text-gray-500">No profile photo available</p>
+              )}
+            </div>
+            <div className="min-w-48">
               <p className="font-semibold">{activeRequest.display_name}</p>
               {activeRequest.username && <p className="text-sm text-gray-400">@{activeRequest.username}</p>}
-              <p className="text-xs text-gray-500">Compare the live person to the existing profile photo if one is available.</p>
+              <p className="mt-2 text-xs text-gray-500">Requested {new Date(activeRequest.requested_at).toLocaleString()}</p>
+              <p className="mt-2 text-xs text-gray-500">The photo URL expires after five minutes. Approving does not verify identity or age.</p>
             </div>
           </div>
-          <DatingSelfieCall
-            userId={activeRequest.user_id}
-            role="reviewer"
-            displayName={activeRequest.display_name}
-            onConnected={markConnected}
-          />
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={!connected || busy} onClick={() => void reviewCheck(true)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-40" style={{ background: GOLD }}>
-              Mark “Selfie checked”
+            <button type="button" disabled={busy} onClick={() => void reviewCheck(true)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-40" style={{ background: GOLD }}>
+              {busy ? "Saving…" : "Approve selfie check"}
             </button>
-            <button type="button" disabled={!connected || busy} onClick={() => void reviewCheck(false)} className="rounded border border-red-500 px-4 py-2 text-red-300 disabled:opacity-40">
-              Reject check
+            <button type="button" disabled={busy} onClick={() => void reviewCheck(false)} className="rounded border border-red-500 px-4 py-2 text-red-300 disabled:opacity-40">
+              Reject selfie check
             </button>
-            <button type="button" disabled={busy} onClick={() => void returnToQueue()} className="rounded border border-[#555] px-4 py-2 text-sm disabled:opacity-40">
-              Return request to queue
+            <button type="button" disabled={busy} onClick={() => setActiveRequest(null)} className="rounded border border-[#555] px-4 py-2 text-sm disabled:opacity-40">
+              Return to queue
             </button>
           </div>
-          {!connected && <p className="text-sm text-gray-500">Review actions unlock after a live video connects.</p>}
         </div>
       ) : (
         <div className="space-y-2">
@@ -218,11 +201,21 @@ export default function DatingSelfieReview() {
               <div>
                 <p className="font-semibold">{request.display_name}</p>
                 {request.username && <p className="text-sm text-gray-400">@{request.username}</p>}
-                <p className="text-xs text-gray-500">Requested {new Date(request.requested_at).toLocaleString()}</p>
+                <p className="text-xs text-gray-500">
+                  {request.status === "requested"
+                    ? `Requested ${new Date(request.requested_at).toLocaleString()}`
+                    : `Review saved; private photo cleanup pending (${request.status.replaceAll("_", " ")}).`}
+                </p>
               </div>
-              <button type="button" disabled={busy} onClick={() => void startCheck(request)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-50" style={{ background: GOLD }}>
-                {busy ? "Starting…" : request.status === "in_progress" ? "Resume live check" : "Start live check"}
-              </button>
+              {request.status === "requested" ? (
+                <button type="button" disabled={busy} onClick={() => setActiveRequest(request)} className="rounded px-4 py-2 font-semibold text-black disabled:opacity-50" style={{ background: GOLD }}>
+                  Review selfie
+                </button>
+              ) : (
+                <button type="button" disabled={busy} onClick={() => void retryCleanup(request)} className="rounded border border-[#555] px-4 py-2 text-sm disabled:opacity-50">
+                  {busy ? "Cleaning up…" : "Retry private photo cleanup"}
+                </button>
+              )}
             </div>
           ))}
           {!requests.length && <p className="text-sm text-gray-400">No pending requests.</p>}

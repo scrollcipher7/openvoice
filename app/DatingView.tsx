@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import DatingSelfieCall from "./DatingSelfieCall";
 import DatingMatchCall from "./DatingMatchCall";
 
 const GOLD = "#f5b301";
@@ -107,6 +106,9 @@ export default function DatingView({
   const [birthDate, setBirthDate] = useState({ month: "", day: "", year: "" });
   const [savedDateOfBirth, setSavedDateOfBirth] = useState(false);
   const [adultAttested, setAdultAttested] = useState(false);
+  const [selfiePath, setSelfiePath] = useState<string | null>(null);
+  const [selfieFile, setSelfieFile] = useState<File | null>(null);
+  const [selfieBusy, setSelfieBusy] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState("not_started");
   const [candidates, setCandidates] = useState<DatingCandidate[]>([]);
   const [matches, setMatches] = useState<DatingMatch[]>([]);
@@ -132,7 +134,7 @@ export default function DatingView({
         .select("gender, is_transgender, about, city, looking_for, interests, is_visible")
         .eq("user_id", session.user.id)
         .maybeSingle(),
-      supabase.from("dating_verifications").select("status").eq("user_id", session.user.id).maybeSingle(),
+      supabase.from("dating_verifications").select("status, selfie_path").eq("user_id", session.user.id).maybeSingle(),
       supabase.from("dating_profile_photos").select("slot, image_url").eq("user_id", session.user.id),
     ]);
 
@@ -155,6 +157,7 @@ export default function DatingView({
     setProfile(savedProfile);
     setPhotos((photosResult.data ?? []) as DatingPhoto[]);
     setVerificationStatus(verificationResult.data?.status ?? "not_started");
+    setSelfiePath(verificationResult.data?.selfie_path ?? null);
     setLoading(false);
   }, [session]);
 
@@ -185,7 +188,7 @@ export default function DatingView({
     if (!session) return;
     const { data, error: resultError } = await supabase
       .from("dating_verifications")
-      .select("status")
+      .select("status, selfie_path")
       .eq("user_id", session.user.id)
       .maybeSingle();
     if (resultError) {
@@ -193,6 +196,7 @@ export default function DatingView({
       return;
     }
     setVerificationStatus(data?.status ?? "not_started");
+    setSelfiePath(data?.selfie_path ?? null);
   }, [session]);
 
   useEffect(() => {
@@ -271,16 +275,52 @@ export default function DatingView({
     setSaving(false);
   }
 
-  async function requestSelfieCheck() {
+  async function submitSelfieCheck() {
+    if (!session || !selfieFile || selfieBusy) return;
     setError("");
     setNotice("");
-    const { error: resultError } = await supabase.rpc("request_dating_verification");
-    if (resultError) {
-      setError(resultError.message);
+    if (!savedDateOfBirth) {
+      setError("Save your date of birth and confirm you are 18 or older before uploading a selfie.");
       return;
     }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(selfieFile.type)) {
+      setError("Choose a JPG, PNG, or WebP selfie photo.");
+      return;
+    }
+    if (selfieFile.size > 5 * 1024 * 1024) {
+      setError("Your selfie photo must be under 5 MB.");
+      return;
+    }
+
+    setSelfieBusy(true);
+    const extension = selfieFile.type === "image/png" ? "png" : selfieFile.type === "image/webp" ? "webp" : "jpg";
+    const path = `${session.user.id}/${Date.now()}-selfie.${extension}`;
+    const { error: uploadError } = await supabase.storage.from("dating-selfies").upload(path, selfieFile, {
+      contentType: selfieFile.type,
+      upsert: false,
+    });
+    if (uploadError) {
+      setError(`Could not upload the selfie photo: ${uploadError.message}`);
+      setSelfieBusy(false);
+      return;
+    }
+
+    const { error: resultError } = await supabase.rpc("request_dating_verification", {
+      selfie_object_path: path,
+    });
+    if (resultError) {
+      const { error: cleanupError } = await supabase.storage.from("dating-selfies").remove([path]);
+      setError(cleanupError
+        ? `Could not submit the selfie: ${resultError.message}. The uploaded private file also could not be removed: ${cleanupError.message}`
+        : resultError.message);
+      setSelfieBusy(false);
+      return;
+    }
+    setSelfiePath(path);
+    setSelfieFile(null);
     setVerificationStatus("requested");
-    setNotice("Request recorded. Your profile remains hidden until an admin reviews your live selfie check.");
+    setNotice("Selfie submitted. An OpenVoice admin will compare it with your profile photo. Your photo is private and will be deleted after review.");
+    setSelfieBusy(false);
   }
 
   async function loadDiscovery() {
@@ -447,7 +487,7 @@ export default function DatingView({
 
       <div className="rounded border border-[#665000] bg-[#211b08] p-3 text-sm text-yellow-100">
         Your date of birth is private and is used only for the 18+ self-attestation. A self-attestation is not formal age verification.
-        Discovery unlocks only after a reviewer checks a live selfie against your profile photo when available. This does not verify your identity or age. OpenVoice does not record or store video, but cannot prevent capture outside the app; no ID is collected.
+        Discovery unlocks after an admin reviews your private selfie photo against your profile photo when available. This manual check does not verify your identity or age.
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-[#333] pb-3">
@@ -628,33 +668,46 @@ export default function DatingView({
 
           <div className="rounded border border-[#333] p-4">
             <p className="font-semibold">Selfie check status: <span style={{ color: GOLD }}>{verificationStatus.replaceAll("_", " ")}</span></p>
-            {!savedDateOfBirth && <p className="mt-2 text-sm text-gray-400">Save your date of birth and profile before requesting a check.</p>}
             <button type="button" onClick={() => void refreshVerificationStatus()} className="mt-3 rounded bg-[#292929] px-4 py-2 text-sm">Refresh status</button>
-            {verificationStatus !== "selfie_checked" && (
-              <button
-                onClick={() => void requestSelfieCheck()}
-                disabled={!savedDateOfBirth || verificationStatus === "requested" || verificationStatus === "in_progress"}
-                className="mt-3 rounded bg-[#292929] px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {verificationStatus === "requested" ? "Check requested" : verificationStatus === "in_progress" ? "Live check in progress" : "Request in-app selfie check"}
-              </button>
+            <p className="mt-2 text-sm text-gray-400">
+              Upload a clear selfie photo. An admin will compare it with your OpenVoice profile photo when available. This is a manual photo review, not face recognition, identity verification, or proof of age. The private selfie is deleted after review.
+            </p>
+            {!savedDateOfBirth && <p className="mt-3 text-sm text-yellow-100">Save your date of birth and confirm you are 18 or older before submitting a selfie.</p>}
+            {verificationStatus === "requested" && selfiePath ? (
+              <p className="mt-3 text-sm text-gray-300">Your selfie is waiting for an OpenVoice admin to review. Your dating profile remains hidden until it is approved.</p>
+            ) : verificationStatus !== "selfie_checked" ? (
+              <div className="mt-3 space-y-3">
+                <label className="block text-sm text-gray-300">
+                  Choose or take a selfie photo
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    capture="user"
+                    disabled={!savedDateOfBirth || selfieBusy}
+                    onChange={(event) => setSelfieFile(event.currentTarget.files?.[0] ?? null)}
+                    className="mt-1 block w-full text-sm file:mr-2 file:rounded file:border-0 file:bg-[#333] file:px-3 file:py-2 file:text-white disabled:opacity-50"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void submitSelfieCheck()}
+                  disabled={!savedDateOfBirth || !selfieFile || selfieBusy}
+                  className="rounded px-4 py-2 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ background: GOLD }}
+                >
+                  {selfieBusy ? "Submitting selfie…" : "Submit selfie for review"}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-300">Selfie checked by an OpenVoice admin. This does not verify your identity or age.</p>
             )}
-            {verificationStatus === "requested" && (
-              <p className="mt-3 text-sm text-gray-300">
-                Your request is waiting for an OpenVoice admin to start the live check from Admin → Dating selfie checks. Your camera stays off while you wait. When the status changes to “in progress,” start the camera below and allow camera access in your browser.
-              </p>
-            )}
-            {verificationStatus === "in_progress" && <p className="mt-3 text-sm text-gray-300">An admin has started your check. Press “Start live selfie check” below when you are ready, then allow camera access in your browser.</p>}
           </div>
-          {verificationStatus === "in_progress" && (
-            <DatingSelfieCall userId={session.user.id} role="applicant" />
-          )}
         </div>
       )}
 
       {section === "discover" && (
         verificationStatus !== "selfie_checked" ? (
-          <p className="text-gray-400">Discovery is locked until your in-app live video selfie check is approved.</p>
+          <p className="text-gray-400">Discovery is locked until an OpenVoice admin approves your selfie photo review.</p>
         ) : candidates.length ? (
           <div className="space-y-3">
             {candidates.map((candidate) => (
@@ -699,7 +752,7 @@ export default function DatingView({
 
       {section === "matches" && (
         verificationStatus !== "selfie_checked" ? (
-          <p className="text-gray-400">Matches and chat are locked until your in-app live video selfie check is approved.</p>
+          <p className="text-gray-400">Matches and chat are locked until an OpenVoice admin approves your selfie photo review.</p>
         ) : (
           <div className="grid gap-4 md:grid-cols-[minmax(12rem,1fr)_2fr]">
             <div className="space-y-2">
