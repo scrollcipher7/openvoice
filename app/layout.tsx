@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { LanguageProvider } from "./LanguageContext";
+import InstallApp from "./InstallApp";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,6 +17,16 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "OpenVoice",
   description: "A social platform for honest conversation.",
+  applicationName: "OpenVoice",
+  appleWebApp: {
+    capable: true,
+    title: "OpenVoice",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: "/openvoice-192.png",
+    apple: "/openvoice-192.png",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -25,7 +36,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <LanguageProvider>{children}</LanguageProvider>
+        <LanguageProvider>
+          {children}
+          <InstallApp />
+        </LanguageProvider>
       </body>
     </html>
   );

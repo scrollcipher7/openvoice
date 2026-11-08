@@ -24,6 +24,10 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 The interface supports English and Spanish. Use the language selector on the sign-in screen or the language button in the app header; the choice is saved in the current browser. Interface labels are translated, while posts, profile text, captions, and chat messages stay in the language their authors wrote them.
 
+## Install OpenVoice
+
+OpenVoice can be installed from its deployed HTTPS website as a Progressive Web App. Visitors can use **Install OpenVoice** when their browser supports an install prompt, or follow the on-screen Add to Home Screen instructions on iOS. The site must be publicly reachable over HTTPS for other people to install it.
+
 ## Dating selfie-photo review and match calls
 
 Dating access requires an admin to manually review a private selfie photo against the account photo when available. Admin accounts are automatically approved for Dating, but still need to self-attest that they are at least 18. This is not face recognition, identity verification, or proof of age. Selfie photos are stored in a private Supabase Storage bucket and deleted after review. Discovery stays locked for non-admin accounts until an admin approves the check.
