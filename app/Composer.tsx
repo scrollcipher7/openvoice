@@ -23,6 +23,7 @@ export default function Composer({
   posting,
   msg,
   onPost,
+  onCreateLive,
 }: {
   avatarUrl: string | null;
   initial: string;
@@ -37,6 +38,7 @@ export default function Composer({
   posting: boolean;
   msg: string;
   onPost: () => Promise<boolean>;
+  onCreateLive: () => void;
 }) {
   const { t } = useLanguage();
   async function submit() {
@@ -58,17 +60,35 @@ export default function Composer({
 
   if (!open) {
     return (
-      <div className="flex items-center gap-3 rounded-lg border border-[#2a2a2a] bg-[#141414] p-3">
-        {avatar}
-        <button
-          onClick={() => setOpen(true)}
-          className="flex-1 rounded-full border border-[#333] bg-[#1c1c1c] px-4 py-2 text-left text-gray-400 hover:border-[#f5b301]"
-        >
-          {t("What's on your mind?")}
-        </button>
-        <button onClick={() => setOpen(true)} aria-label={t("Add photo")} className="text-2xl">
-          🖼️
-        </button>
+      <div className="space-y-2 rounded-lg border border-[#2a2a2a] bg-[#141414] p-3">
+        <div className="flex items-center gap-3">
+          {avatar}
+          <button
+            onClick={() => setOpen(true)}
+            className="flex-1 rounded-full border border-[#333] bg-[#1c1c1c] px-4 py-2 text-left text-gray-400 hover:border-[#f5b301]"
+          >
+            {t("What's on your mind?")}
+          </button>
+        </div>
+        <div className="flex border-t border-[#2a2a2a] pt-2">
+          <button
+            type="button"
+            onClick={onCreateLive}
+            className="flex flex-1 items-center justify-center gap-2 rounded py-2 text-sm text-gray-300 hover:bg-[#1c1c1c]"
+          >
+            <span aria-hidden="true" className="text-lg text-red-500">●</span>
+            {t("Live video")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label={t("Add photo")}
+            className="flex flex-1 items-center justify-center gap-2 rounded py-2 text-sm text-gray-300 hover:bg-[#1c1c1c]"
+          >
+            <span aria-hidden="true" className="text-lg">▧</span>
+            {t("Photo/Video")}
+          </button>
+        </div>
       </div>
     );
   }

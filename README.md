@@ -40,7 +40,11 @@ Apply `supabase/migrations/20261108130000_friends_messenger_alerts_feedback.sql`
 
 ## Stories
 
-The top-bar **+** menu offers Post, Reel, and Story. Stories support images and videos up to 60 seconds / 50 MB, can include a caption, and disappear from the active Stories feed after 24 hours. Story media is stored in a private bucket and served with signed URLs. Apply `supabase/migrations/20261108150000_profile_stories.sql` after the other social-feature migrations.
+The top-bar **+** menu offers Post, Reel, Story, and Live. Stories support images and videos up to 60 seconds / 50 MB, can include a caption, and disappear from the active Stories feed after 24 hours. Story media is stored in a private bucket and served with signed URLs. Apply `supabase/migrations/20261108150000_profile_stories.sql` after the other social-feature migrations.
+
+## Live video
+
+Live lets authenticated members broadcast video with chat, up to five concurrent viewers, and up to two host-approved on-camera guests. Viewers can switch between Panel and Grid layouts. This first version uses direct WebRTC connections and the configured TURN relay, so it is intended for small audiences, not unlimited broadcasts. Apply `supabase/migrations/20261108160000_live_video_and_chat.sql` after the other social-feature migrations.
 
 ## Reels
 
@@ -56,8 +60,9 @@ Before using it:
 6. Apply `supabase/migrations/20261108133000_feedback_admin_alerts.sql` to notify admins of member feedback and suggestions.
 7. Apply `supabase/migrations/20261108140000_profile_reports_admin_messaging.sql` to enable profile reports and admin moderation conversations.
 8. Apply `supabase/migrations/20261108150000_profile_stories.sql` to enable 24-hour Stories.
-9. In Supabase Realtime settings, disable **Allow public access** so private match and friend-call signaling channels are protected by the migrations' policies.
-10. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
+9. Apply `supabase/migrations/20261108160000_live_video_and_chat.sql` to enable Live video, guest requests, and chat.
+10. In Supabase Realtime settings, disable **Allow public access** so private match, friend-call, and Live signaling channels are protected by the migrations' policies.
+11. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
 
 ```env
 DATING_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp

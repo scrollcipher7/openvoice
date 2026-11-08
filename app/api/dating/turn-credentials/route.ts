@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 type RequestBody = {
   targetMatchId?: unknown;
   targetFriendConversationId?: unknown;
+  targetLiveId?: unknown;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,7 +33,8 @@ export async function POST(request: Request) {
   }
   const isMatchCall = typeof body.targetMatchId === "string" && UUID.test(body.targetMatchId);
   const isFriendCall = typeof body.targetFriendConversationId === "string" && UUID.test(body.targetFriendConversationId);
-  if (isMatchCall === isFriendCall) {
+  const isLiveCall = typeof body.targetLiveId === "string" && UUID.test(body.targetLiveId);
+  if ([isMatchCall, isFriendCall, isLiveCall].filter(Boolean).length !== 1) {
     return Response.json({ error: "A valid call request is required." }, { status: 400 });
   }
 
@@ -46,12 +48,16 @@ export async function POST(request: Request) {
 
   const roomTopic = isFriendCall
     ? `friend-call:${body.targetFriendConversationId}`
-    : `dating-call:${body.targetMatchId}`;
-  const { data: canCall, error: callError } = isFriendCall
+    : isLiveCall
+      ? `openvoice-live:${body.targetLiveId}`
+      : `dating-call:${body.targetMatchId}`;
+  const permissionCheck = isFriendCall
     ? await client.rpc("friends_can_use_call_topic", { target_topic: roomTopic })
-    : await client.rpc("dating_can_use_match_call", { target_match: body.targetMatchId });
-  if (callError) return Response.json({ error: "Could not confirm this match call is allowed." }, { status: 500 });
-  if (!canCall) {
+    : isLiveCall
+      ? await client.rpc("live_can_use_topic", { target_topic: roomTopic })
+      : await client.rpc("dating_can_use_match_call", { target_match: body.targetMatchId });
+  if (permissionCheck.error) return Response.json({ error: "Could not confirm this call is allowed." }, { status: 500 });
+  if (!permissionCheck.data) {
     return Response.json({ error: "You are not allowed to call in this conversation." }, { status: 403 });
   }
 

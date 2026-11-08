@@ -15,6 +15,7 @@ import ReelsView from "./ReelsView";
 import FriendsMessenger from "./FriendsMessenger";
 import AlertsView from "./AlertsView";
 import StoriesView from "./StoriesView";
+import LiveView from "./LiveView";
 import { useLanguage } from "./LanguageContext";
 import type { Session } from "@supabase/supabase-js";
 
@@ -38,11 +39,12 @@ type Post = {
   } | null;
 };
 
-type Tab = "home" | "reels" | "messages" | "dating" | "alerts" | "search" | "profile";
+type Tab = "home" | "reels" | "live" | "messages" | "dating" | "alerts" | "search" | "profile";
 
 function isTab(value: string | null): value is Tab {
   return value === "home"
     || value === "reels"
+    || value === "live"
     || value === "messages"
     || value === "dating"
     || value === "alerts"
@@ -162,6 +164,7 @@ export default function Home() {
   const [posting, setPosting] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [storyComposerOpen, setStoryComposerOpen] = useState(false);
+  const [liveCreateOpen, setLiveCreateOpen] = useState(false);
   const [menuId, setMenuId] = useState<number | null>(null);
 
   async function loadPosts() {
@@ -408,6 +411,12 @@ export default function Home() {
           go("home");
           setStoryComposerOpen(true);
         }}
+        onCreateLive={() => {
+          setComposerOpen(false);
+          setStoryComposerOpen(false);
+          go("live");
+          setLiveCreateOpen(true);
+        }}
         onSearch={() => go("search")}
         onMessages={() => openMessages()}
       />
@@ -440,6 +449,10 @@ export default function Home() {
               posting={posting}
               msg={msg}
               onPost={createPost}
+              onCreateLive={() => {
+                go("live");
+                setLiveCreateOpen(true);
+              }}
             />
 
             {posts.map((p) => {
@@ -506,6 +519,14 @@ export default function Home() {
         )}
 
         {tab === "reels" && <ReelsView session={session} isAdmin={isAdmin} />}
+        {tab === "live" && (
+          <LiveView
+            session={session}
+            myName={myName}
+            createOpen={liveCreateOpen}
+            onCreateHandled={() => setLiveCreateOpen(false)}
+          />
+        )}
         {tab === "messages" && (
           <FriendsMessenger
             session={session}

@@ -29,12 +29,14 @@ export default function TopBar({
   onCreatePost,
   onCreateReel,
   onCreateStory,
+  onCreateLive,
   onSearch,
   onMessages,
 }: {
   onCreatePost: () => void;
   onCreateReel: () => void;
   onCreateStory: () => void;
+  onCreateLive: () => void;
   onSearch: () => void;
   onMessages: () => void;
 }) {
@@ -80,6 +82,9 @@ export default function TopBar({
                 </button>
                 <button role="menuitem" onClick={() => choose(onCreateStory)} className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#2a2a2a]">
                   {t("Story")}
+                </button>
+                <button role="menuitem" onClick={() => choose(onCreateLive)} className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#2a2a2a]">
+                  {t("Live")}
                 </button>
               </div>
             )}
