@@ -22,7 +22,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Dating selfie-photo review and match calls
 
-Dating access requires an admin to manually review a private selfie photo against the account photo when available. This is not face recognition, identity verification, or proof of age. Selfie photos are stored in a private Supabase Storage bucket and deleted after review. Discovery stays locked until an admin approves the check.
+Dating access requires an admin to manually review a private selfie photo against the account photo when available. Admin accounts are automatically approved for Dating, but still need to self-attest that they are at least 18. This is not face recognition, identity verification, or proof of age. Selfie photos are stored in a private Supabase Storage bucket and deleted after review. Discovery stays locked for non-admin accounts until an admin approves the check.
 
 Dating profiles can include up to three regular photos, one meme, and one AI-generated self-photo. Meme and AI images are labeled in discovery. Profile owners can replace or remove each image. The “Looking for” selection is Friendship, Dating, or Marriage. Gender is Male or Female, with an optional “I’m transgender” self-description that appears on discovery profiles only when selected.
 
@@ -32,8 +32,9 @@ Before using it:
 
 1. Apply `supabase/migrations/20261108090000_dating_mvp.sql` to the Supabase project.
 2. Apply `supabase/migrations/20261108113000_dating_selfie_photo_review.sql` to the Supabase project.
-3. In Supabase Realtime settings, disable **Allow public access** so private match-call signaling channels are protected by the migration's policies.
-4. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
+3. Apply `supabase/migrations/20261108115500_admin_dating_auto_approval.sql` to the Supabase project. Admin accounts still need to save a date of birth and self-attest that they are 18 or older; their selfie review is automatically approved.
+4. In Supabase Realtime settings, disable **Allow public access** so private match-call signaling channels are protected by the migration's policies.
+5. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
 
 ```env
 DATING_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp

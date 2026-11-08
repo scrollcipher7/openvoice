@@ -116,6 +116,7 @@ export default function DatingView({
   const [messages, setMessages] = useState<DatingMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -128,7 +129,7 @@ export default function DatingView({
     }
 
     setError("");
-    const [privateResult, profileResult, verificationResult, photosResult] = await Promise.all([
+    const [privateResult, profileResult, verificationResult, photosResult, accountResult] = await Promise.all([
       supabase.from("dating_private").select("date_of_birth").eq("user_id", session.user.id).maybeSingle(),
       supabase.from("dating_profiles")
         .select("gender, is_transgender, about, city, looking_for, interests, is_visible")
@@ -136,9 +137,10 @@ export default function DatingView({
         .maybeSingle(),
       supabase.from("dating_verifications").select("status, selfie_path").eq("user_id", session.user.id).maybeSingle(),
       supabase.from("dating_profile_photos").select("slot, image_url").eq("user_id", session.user.id),
+      supabase.from("profiles").select("is_admin").eq("id", session.user.id).single(),
     ]);
 
-    const failed = privateResult.error || profileResult.error || verificationResult.error || photosResult.error;
+    const failed = privateResult.error || profileResult.error || verificationResult.error || photosResult.error || accountResult.error;
     if (failed) {
       setError(failed.message);
       setLoading(false);
@@ -150,14 +152,16 @@ export default function DatingView({
     setBirthDate(savedDob ? { month, day, year } : { month: "", day: "", year: "" });
     setSavedDateOfBirth(Boolean(savedDob));
     setAdultAttested(Boolean(savedDob));
+    const adminAccount = accountResult.data.is_admin === true;
+    setIsAdmin(adminAccount);
     const savedProfile = profileResult.data ? { ...emptyProfile, ...profileResult.data } : emptyProfile;
     if (!["friendship", "dating", "marriage"].includes(savedProfile.looking_for)) {
       savedProfile.looking_for = "dating";
     }
     setProfile(savedProfile);
     setPhotos((photosResult.data ?? []) as DatingPhoto[]);
-    setVerificationStatus(verificationResult.data?.status ?? "not_started");
-    setSelfiePath(verificationResult.data?.selfie_path ?? null);
+    setVerificationStatus(adminAccount ? "selfie_checked" : verificationResult.data?.status ?? "not_started");
+    setSelfiePath(adminAccount ? null : verificationResult.data?.selfie_path ?? null);
     setLoading(false);
   }, [session]);
 
@@ -186,17 +190,18 @@ export default function DatingView({
 
   const refreshVerificationStatus = useCallback(async () => {
     if (!session) return;
-    const { data, error: resultError } = await supabase
-      .from("dating_verifications")
-      .select("status, selfie_path")
-      .eq("user_id", session.user.id)
-      .maybeSingle();
-    if (resultError) {
-      setError(resultError.message);
+    const [verificationResult, accountResult] = await Promise.all([
+      supabase.from("dating_verifications").select("status, selfie_path").eq("user_id", session.user.id).maybeSingle(),
+      supabase.from("profiles").select("is_admin").eq("id", session.user.id).single(),
+    ]);
+    if (verificationResult.error || accountResult.error) {
+      setError(verificationResult.error?.message ?? accountResult.error?.message ?? "Could not refresh verification status.");
       return;
     }
-    setVerificationStatus(data?.status ?? "not_started");
-    setSelfiePath(data?.selfie_path ?? null);
+    const adminAccount = accountResult.data.is_admin === true;
+    setIsAdmin(adminAccount);
+    setVerificationStatus(adminAccount ? "selfie_checked" : verificationResult.data?.status ?? "not_started");
+    setSelfiePath(adminAccount ? null : verificationResult.data?.selfie_path ?? null);
   }, [session]);
 
   useEffect(() => {
@@ -487,7 +492,9 @@ export default function DatingView({
 
       <div className="rounded border border-[#665000] bg-[#211b08] p-3 text-sm text-yellow-100">
         Your date of birth is private and is used only for the 18+ self-attestation. A self-attestation is not formal age verification.
-        Discovery unlocks after an admin reviews your private selfie photo against your profile photo when available. This manual check does not verify your identity or age.
+        {isAdmin
+          ? " Admin accounts are automatically approved without a selfie review."
+          : " Discovery unlocks after an admin reviews your private selfie photo against your profile photo when available. This manual check does not verify your identity or age."}
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-[#333] pb-3">
@@ -670,10 +677,14 @@ export default function DatingView({
             <p className="font-semibold">Selfie check status: <span style={{ color: GOLD }}>{verificationStatus.replaceAll("_", " ")}</span></p>
             <button type="button" onClick={() => void refreshVerificationStatus()} className="mt-3 rounded bg-[#292929] px-4 py-2 text-sm">Refresh status</button>
             <p className="mt-2 text-sm text-gray-400">
-              Upload a clear selfie photo. An admin will compare it with your OpenVoice profile photo when available. This is a manual photo review, not face recognition, identity verification, or proof of age. The private selfie is deleted after review.
+              {isAdmin
+                ? "Admin accounts are automatically approved for Dating and do not need to submit a selfie. This does not verify age; save your date of birth and 18+ self-attestation."
+                : "Upload a clear selfie photo. An admin will compare it with your OpenVoice profile photo when available. This is a manual photo review, not face recognition, identity verification, or proof of age. The private selfie is deleted after review."}
             </p>
             {!savedDateOfBirth && <p className="mt-3 text-sm text-yellow-100">Save your date of birth and confirm you are 18 or older before submitting a selfie.</p>}
-            {verificationStatus === "requested" && selfiePath ? (
+            {isAdmin ? (
+              <p className="mt-3 text-sm text-gray-300">Admin account: selfie review is automatically passed.</p>
+            ) : verificationStatus === "requested" && selfiePath ? (
               <p className="mt-3 text-sm text-gray-300">Your selfie is waiting for an OpenVoice admin to review. Your dating profile remains hidden until it is approved.</p>
             ) : verificationStatus !== "selfie_checked" ? (
               <div className="mt-3 space-y-3">
@@ -747,7 +758,21 @@ export default function DatingView({
               </article>
             ))}
           </div>
-        ) : <p className="text-gray-400">No profiles to show right now.</p>
+        ) : (
+          <div className="space-y-2 rounded border border-[#333] p-4">
+            <p className="text-gray-300">No other profiles are available to show right now. Your own profile does not appear in your Discover list.</p>
+            <p className="text-sm text-gray-400">
+              To let other people discover you, open My profile, check “Show my profile in dating discovery,” and save. Other profiles appear after their owners are approved and choose to be visible.
+            </p>
+            <button
+              type="button"
+              onClick={() => setSection("profile")}
+              className="rounded bg-[#292929] px-3 py-2 text-sm"
+            >
+              Open My profile
+            </button>
+          </div>
+        )
       )}
 
       {section === "matches" && (
