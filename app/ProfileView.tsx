@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 
@@ -11,6 +12,13 @@ type ProfileRow = {
   cover_url: string | null;
   viewers_public: boolean | null;
   is_admin: boolean | null;
+  hometown: string | null;
+  relationship_status: string | null;
+  looking_for: string | null;
+  interests: string | null;
+  favorite_music: string | null;
+  favorite_movies: string | null;
+  website: string | null;
 };
 
 type Viewer = {
@@ -21,8 +29,30 @@ type Viewer = {
 
 const GOLD = "#f5b301";
 const RED = "#d7261e";
+const ADULT = /(porn|xxx|xvideos|xnxx|xhamster|redtube|youporn|spankbang|chaturbate|onlyfans|fansly|brazzers|erome|rule34|hentai|camsoda|stripchat|livejasmin|bongacams)/i;
 const inputCls =
   "w-full rounded border border-[#333] bg-[#1c1c1c] p-2 text-white placeholder-gray-500 outline-none focus:border-[#f5b301]";
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded border border-[#2a2a2a]">
+      <div className="px-3 py-1 text-sm font-bold uppercase tracking-wider text-black" style={{ background: GOLD }}>
+        {title}
+      </div>
+      <div className="space-y-1 bg-[#1c1c1c] p-3 text-sm">{children}</div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <p className="break-words">
+      <span className="text-gray-400">{label}: </span>
+      {value}
+    </p>
+  );
+}
 
 async function uploadImage(userId: string, file: File): Promise<string> {
   if (!file.type.startsWith("image/")) throw new Error("Only image files can be uploaded.");
@@ -49,6 +79,13 @@ export default function ProfileView({
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
+  const [hometown, setHometown] = useState("");
+  const [relationship, setRelationship] = useState("");
+  const [lookingFor, setLookingFor] = useState("");
+  const [interests, setInterests] = useState("");
+  const [music, setMusic] = useState("");
+  const [movies, setMovies] = useState("");
+  const [website, setWebsite] = useState("");
   const [viewersPublic, setViewersPublic] = useState(true);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [coverFile, setCoverFile] = useState<File | null>(null);
@@ -58,26 +95,30 @@ export default function ProfileView({
   const isOwn = !!session && session.user.id === profileId;
 
   const load = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
-      .select("display_name, username, bio, avatar_url, cover_url, viewers_public, is_admin")
+      .select(
+        "display_name, username, bio, avatar_url, cover_url, viewers_public, is_admin, hometown, relationship_status, looking_for, interests, favorite_music, favorite_movies, website"
+      )
       .eq("id", profileId)
       .single();
+    if (error) throw new Error(error.message);
     setProfile(data as ProfileRow | null);
 
-    const { data: v } = await supabase
+    const { data: v, error: viewersError } = await supabase
       .from("profile_views")
       .select("viewer_id, viewed_at, profiles!profile_views_viewer_id_fkey(display_name, username, avatar_url)")
       .eq("profile_id", profileId)
       .order("viewed_at", { ascending: false })
       .limit(20);
+    if (viewersError) throw new Error(viewersError.message);
     setViewers((v as unknown as Viewer[]) ?? []);
   }, [profileId]);
 
   useEffect(() => {
     async function run() {
       if (session && session.user.id !== profileId) {
-        await supabase.from("profile_views").upsert(
+        const { error } = await supabase.from("profile_views").upsert(
           {
             profile_id: profileId,
             viewer_id: session.user.id,
@@ -85,8 +126,13 @@ export default function ProfileView({
           },
           { onConflict: "profile_id,viewer_id" }
         );
+        if (error) setMsg(error.message);
       }
-      load();
+      try {
+        await load();
+      } catch (error) {
+        setMsg(error instanceof Error ? error.message : "Could not load profile.");
+      }
     }
     run();
   }, [profileId, session, load]);
@@ -95,6 +141,13 @@ export default function ProfileView({
     setName(profile?.display_name ?? "");
     setUsername(profile?.username ?? "");
     setBio(profile?.bio ?? "");
+    setHometown(profile?.hometown ?? "");
+    setRelationship(profile?.relationship_status ?? "");
+    setLookingFor(profile?.looking_for ?? "");
+    setInterests(profile?.interests ?? "");
+    setMusic(profile?.favorite_music ?? "");
+    setMovies(profile?.favorite_movies ?? "");
+    setWebsite(profile?.website ?? "");
     setViewersPublic(profile?.viewers_public ?? true);
     setAvatarFile(null);
     setCoverFile(null);
@@ -107,6 +160,18 @@ export default function ProfileView({
     setSaving(true);
     setMsg("");
     try {
+      let site = website.trim();
+      if (site) {
+        if (!/^https?:\/\//i.test(site)) site = "https://" + site;
+        let host = "";
+        try {
+          host = new URL(site).hostname;
+        } catch {
+          throw new Error("That website link doesn't look valid.");
+        }
+        if (ADULT.test(host)) throw new Error("That kind of link is not allowed on OpenVoice.");
+      }
+
       let avatarUrl = profile?.avatar_url ?? null;
       let coverUrl = profile?.cover_url ?? null;
       if (avatarFile) avatarUrl = await uploadImage(session.user.id, avatarFile);
@@ -119,6 +184,13 @@ export default function ProfileView({
           display_name: name.trim() || null,
           username: cleanUsername || null,
           bio: bio.trim() || null,
+          hometown: hometown.trim() || null,
+          relationship_status: relationship.trim() || null,
+          looking_for: lookingFor.trim() || null,
+          interests: interests.trim() || null,
+          favorite_music: music.trim() || null,
+          favorite_movies: movies.trim() || null,
+          website: site || null,
           avatar_url: avatarUrl,
           cover_url: coverUrl,
           viewers_public: viewersPublic,
@@ -126,17 +198,22 @@ export default function ProfileView({
         .eq("id", session.user.id);
       if (error) throw new Error(error.message);
       setEditing(false);
-      load();
+      await load();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Could not save.");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
-  if (!profile) return <p className="text-gray-400">Loading profile...</p>;
+  if (!profile) {
+    return <p className={msg ? "text-sm text-red-500" : "text-gray-400"}>{msg || "Loading profile..."}</p>;
+  }
 
   const shownName = profile.display_name || profile.username || "No name yet";
   const initial = shownName.charAt(0).toUpperCase();
+  const hasBasic = !!(profile.hometown || profile.relationship_status || profile.looking_for || profile.website);
+  const safeSite = profile.website && /^https?:\/\//i.test(profile.website) ? profile.website : null;
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#2a2a2a] bg-[#141414]">
@@ -176,17 +253,60 @@ export default function ProfileView({
         </div>
 
         {!editing ? (
-          <div className="mt-3 space-y-1">
-            <h2 className="text-2xl font-bold">
-              {shownName}
-              {profile.is_admin && (
-                <span className="ml-2 rounded px-2 py-0.5 align-middle text-xs text-white" style={{ background: RED }}>
-                  ADMIN
-                </span>
-              )}
-            </h2>
-            {profile.username && <p className="text-sm text-gray-400">@{profile.username}</p>}
-            {profile.bio && <p className="whitespace-pre-wrap break-words pt-2">{profile.bio}</p>}
+          <div className="mt-3 space-y-3">
+            <div>
+              <h2 className="text-2xl font-bold">
+                {shownName}
+                {profile.is_admin && (
+                  <span className="ml-2 rounded px-2 py-0.5 align-middle text-xs text-white" style={{ background: RED }}>
+                    ADMIN
+                  </span>
+                )}
+              </h2>
+              {profile.username && <p className="text-sm text-gray-400">@{profile.username}</p>}
+            </div>
+
+            {profile.bio && (
+              <Section title="About me">
+                <p className="whitespace-pre-wrap break-words">{profile.bio}</p>
+              </Section>
+            )}
+
+            {hasBasic && (
+              <Section title="Basic info">
+                <Row label="Hometown" value={profile.hometown} />
+                <Row label="Relationship status" value={profile.relationship_status} />
+                <Row label="Looking for" value={profile.looking_for} />
+                {safeSite && (
+                  <p className="break-all">
+                    <span className="text-gray-400">Website: </span>
+                    <a href={safeSite} target="_blank" rel="noopener noreferrer nofollow" style={{ color: GOLD }}>
+                      {safeSite}
+                    </a>
+                  </p>
+                )}
+              </Section>
+            )}
+
+            {profile.interests && (
+              <Section title="Interests">
+                <p className="whitespace-pre-wrap break-words">{profile.interests}</p>
+              </Section>
+            )}
+            {profile.favorite_music && (
+              <Section title="Favorite music">
+                <p className="whitespace-pre-wrap break-words">{profile.favorite_music}</p>
+              </Section>
+            )}
+            {profile.favorite_movies && (
+              <Section title="Favorite movies">
+                <p className="whitespace-pre-wrap break-words">{profile.favorite_movies}</p>
+              </Section>
+            )}
+
+            {isOwn && !profile.bio && !hasBasic && !profile.interests && (
+              <p className="text-sm text-gray-400">Tap Edit profile to fill in your page.</p>
+            )}
           </div>
         ) : (
           <div className="mt-3 space-y-2">
@@ -194,8 +314,22 @@ export default function ProfileView({
               onChange={(e) => setName(e.target.value)} />
             <input className={inputCls} placeholder="Username (letters, numbers, _)" value={username}
               onChange={(e) => setUsername(e.target.value)} />
-            <textarea className={inputCls} rows={3} placeholder="Bio" value={bio}
+            <textarea className={inputCls} rows={3} placeholder="About me" value={bio}
               onChange={(e) => setBio(e.target.value)} />
+            <input className={inputCls} placeholder="Hometown (city, state only)" value={hometown}
+              onChange={(e) => setHometown(e.target.value)} />
+            <input className={inputCls} placeholder="Relationship status" value={relationship}
+              onChange={(e) => setRelationship(e.target.value)} />
+            <input className={inputCls} placeholder="Looking for (friendship, networking, dating...)" value={lookingFor}
+              onChange={(e) => setLookingFor(e.target.value)} />
+            <textarea className={inputCls} rows={2} placeholder="Interests" value={interests}
+              onChange={(e) => setInterests(e.target.value)} />
+            <textarea className={inputCls} rows={2} placeholder="Favorite music" value={music}
+              onChange={(e) => setMusic(e.target.value)} />
+            <textarea className={inputCls} rows={2} placeholder="Favorite movies" value={movies}
+              onChange={(e) => setMovies(e.target.value)} />
+            <input className={inputCls} placeholder="Website" value={website}
+              onChange={(e) => setWebsite(e.target.value)} />
             <label className="block text-sm text-gray-400">
               Profile photo
               <input type="file" accept="image/*" className="mt-1 block text-sm"

@@ -20,6 +20,27 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Dating live selfie-check setup
+
+The dating check is a live human review, not automated face recognition, identity verification, or proof of age. Video is relayed between the applicant and assigned reviewer through TURN. OpenVoice does not record or store it, but cannot prevent someone from capturing it outside the app. Discovery stays locked until an admin approves the check.
+
+Dating profiles can include up to three regular photos, one meme, and one AI-generated self-photo. Meme and AI images are labeled in discovery. Profile owners can replace or remove each image. The “Looking for” selection is Friendship, Dating, or Marriage. Gender is Male or Female, with an optional “I’m transgender” self-description that appears on discovery profiles only when selected.
+
+Mutual matches get conversation starter prompts in chat and can start audio or video calls there. The recipient must have that match chat open to receive a call. Call signaling is restricted to the two verified match members, and media uses the same relay-only TURN service as selfie checks.
+
+Before using it:
+
+1. Apply `supabase/migrations/20261108090000_dating_mvp.sql` to the Supabase project.
+2. In Supabase Realtime settings, disable **Allow public access** so the private selfie-check channels are protected by the migration's policies.
+3. Configure a TURN server that supports coturn REST API shared-secret authentication. Set the server-only app environment variables below in local development and the production host. Do not prefix the secret with `NEXT_PUBLIC_`.
+
+```env
+DATING_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp
+DATING_TURN_SHARED_SECRET=your-coturn-static-auth-secret
+```
+
+Configure coturn to use the same shared secret (`use-auth-secret` and `static-auth-secret`). The app issues one-hour, request-scoped TURN credentials; never put the shared secret in browser code. Camera access requires HTTPS (localhost is allowed for development). Without TURN configuration, the live check is unavailable and dating discovery remains locked.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

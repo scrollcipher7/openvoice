@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import DatingSelfieReview from "./DatingSelfieReview";
 
 type Report = {
   id: number;
@@ -40,7 +41,7 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
     const { data: r, error: reportsError } = await supabase
       .from("reports")
       .select(
-        "id, reason, created_at, post_id, posts(id, content, image_url, link_url, user_id, profiles(display_name, username, is_banned))"
+        "id, reason, created_at, post_id, posts(id, content, image_url, link_url, user_id, profiles!posts_user_id_fkey(display_name, username, is_banned))"
       )
       .eq("status", "open")
       .order("created_at", { ascending: false });
@@ -131,6 +132,7 @@ export default function AdminPanel({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <div className="space-y-4 rounded-lg border border-[#2a2a2a] bg-[#141414] p-4">
+      <DatingSelfieReview />
       <h2 className="text-xl font-bold uppercase tracking-wider" style={{ color: GOLD }}>
         Admin: reports ({reports.length})
       </h2>

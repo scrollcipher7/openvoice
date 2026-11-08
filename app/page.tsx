@@ -10,6 +10,7 @@ import Welcome from "./Welcome";
 import TopBar from "./TopBar";
 import Composer from "./Composer";
 import BottomBar from "./BottomBar";
+import DatingView from "./DatingView";
 import type { Session } from "@supabase/supabase-js";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
@@ -124,6 +125,7 @@ export default function Home() {
   const [myAvatar, setMyAvatar] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("home");
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [returnTab, setReturnTab] = useState<Tab>("home");
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -138,11 +140,19 @@ export default function Home() {
   const [menuId, setMenuId] = useState<number | null>(null);
 
   async function loadPosts() {
-    const { data } = await supabase
+    try {
+      const { data, error } = await supabase
       .from("posts")
-      .select("id, user_id, content, image_url, link_url, created_at, profiles(username, display_name, avatar_url, is_admin)")
+      .select("id, user_id, content, image_url, link_url, created_at, profiles!posts_user_id_fkey(username, display_name, avatar_url, is_admin)")
       .order("created_at", { ascending: false });
-    setPosts((data as unknown as Post[]) ?? []);
+      if (error) {
+        setMsg(`Could not load posts: ${error.message}`);
+        return;
+      }
+      setPosts((data as unknown as Post[]) ?? []);
+    } catch (error) {
+      setMsg(error instanceof Error ? `Could not load posts: ${error.message}` : "Could not load posts.");
+    }
   }
 
   async function loadMe(s: Session | null) {
@@ -207,37 +217,43 @@ export default function Home() {
 
     setPosting(true);
     setMsg("");
-    let imageUrl: string | null = null;
+    try {
+      let imageUrl: string | null = null;
 
-    if (file) {
-      const safeName = file.name.replace(/[^\w.-]/g, "_");
-      const filePath = `${session.user.id}/${Date.now()}-${safeName}`;
-      const { error: upErr } = await supabase.storage.from("post-images").upload(filePath, file);
-      if (upErr) {
-        setPosting(false);
-        setMsg(upErr.message);
+      if (file) {
+        const safeName = file.name.replace(/[^\w.-]/g, "_");
+        const filePath = `${session.user.id}/${Date.now()}-${safeName}`;
+        const { error: upErr } = await supabase.storage.from("post-images").upload(filePath, file);
+        if (upErr) {
+          setMsg(upErr.message);
+          return false;
+        }
+        imageUrl = supabase.storage.from("post-images").getPublicUrl(filePath).data.publicUrl;
+      }
+
+      const { error } = await supabase.from("posts").insert({
+        user_id: session.user.id,
+        content: text.trim(),
+        image_url: imageUrl,
+        link_url: link || null,
+      });
+      if (error) {
+        setMsg(error.message);
         return false;
       }
-      imageUrl = supabase.storage.from("post-images").getPublicUrl(filePath).data.publicUrl;
-    }
 
-    const { error } = await supabase.from("posts").insert({
-      user_id: session.user.id,
-      content: text.trim(),
-      image_url: imageUrl,
-      link_url: link || null,
-    });
-    setPosting(false);
-    if (error) {
-      setMsg(error.message);
+      setText("");
+      setLinkUrl("");
+      setFile(null);
+      setFileKey((k) => k + 1);
+      loadPosts();
+      return true;
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Could not create post.");
       return false;
+    } finally {
+      setPosting(false);
     }
-    setText("");
-    setLinkUrl("");
-    setFile(null);
-    setFileKey((k) => k + 1);
-    loadPosts();
-    return true;
   }
 
   async function deletePost(id: number) {
@@ -254,6 +270,7 @@ export default function Home() {
   }
 
   function openProfile(userId: string) {
+    setReturnTab(tab);
     setViewingId(userId);
     setTab("profile");
     setMenuId(null);
@@ -296,6 +313,7 @@ export default function Home() {
       <main className="mx-auto max-w-xl space-y-3 p-3">
         {tab === "home" && (
           <>
+            {msg && !composerOpen && <p className="text-sm text-red-500">{msg}</p>}
             <Composer
               avatarUrl={myAvatar}
               initial={initial}
@@ -377,7 +395,7 @@ export default function Home() {
 
         {tab === "reels" && <ComingSoon title="Reels" text="Short videos from the streets." />}
         {tab === "messages" && <ComingSoon title="Messages" text="Talk straight, one on one." />}
-        {tab === "dating" && <ComingSoon title="Dating" text="Real people only. 18+ and verified." />}
+        {tab === "dating" && <DatingView session={session} onOpenProfile={openProfile} />}
         {tab === "alerts" && <ComingSoon title="Alerts" text="Likes, comments, and who viewed you." />}
         {tab === "search" && <ComingSoon title="Search" text="Find people and posts." />}
 
@@ -386,7 +404,7 @@ export default function Home() {
             key={viewingId ?? "me"}
             profileId={viewingId ?? session.user.id}
             session={session}
-            onBack={viewingId ? () => go("home") : undefined}
+            onBack={viewingId ? () => go(returnTab) : undefined}
           />
         )}
         {tab === "profile" && (
