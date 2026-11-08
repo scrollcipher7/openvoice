@@ -18,6 +18,7 @@ import StoriesView from "./StoriesView";
 import LiveView from "./LiveView";
 import SearchView from "./SearchView";
 import { useLanguage } from "./LanguageContext";
+import { Browser } from "@capacitor/browser";
 import type { Session } from "@supabase/supabase-js";
 
 const anton = Anton({ subsets: ["latin"], weight: "400" });
@@ -255,11 +256,32 @@ export default function Home() {
 
   async function signInWithGoogle() {
     setMsg("");
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) setMsg(error.message);
+    if (typeof window !== "undefined" && (window as any).Capacitor?.isNativePlatform()) {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: "https://openvoice-eight.vercel.app",
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error) {
+        setMsg(error.message);
+        return;
+      }
+      if (data?.url) {
+        try {
+          await Browser.open({ url: data.url });
+        } catch (e: any) {
+          setMsg(e?.message || "Could not open browser");
+        }
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) setMsg(error.message);
+    }
   }
 
   async function createPost(): Promise<boolean> {
