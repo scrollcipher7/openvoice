@@ -16,6 +16,7 @@ import FriendsMessenger from "./FriendsMessenger";
 import AlertsView from "./AlertsView";
 import StoriesView from "./StoriesView";
 import LiveView from "./LiveView";
+import SearchView from "./SearchView";
 import { useLanguage } from "./LanguageContext";
 import type { Session } from "@supabase/supabase-js";
 
@@ -120,19 +121,6 @@ function LinkPreview({ url }: { url: string }) {
       <p className="text-xs uppercase tracking-wide text-gray-400">{e.host}</p>
       <p className="break-all" style={{ color: GOLD }}>{e.href}</p>
     </a>
-  );
-}
-
-function ComingSoon({ title, text }: { title: string; text: string }) {
-  const { t } = useLanguage();
-  return (
-    <div className="rounded-lg border border-[#2a2a2a] bg-[#141414] p-8 text-center">
-      <h2 className={`${anton.className} text-3xl uppercase tracking-wider`} style={{ color: GOLD }}>{t(title)}</h2>
-      <p className="mt-2 text-gray-400">{t(text)}</p>
-      <p className="mt-4 inline-block rounded px-3 py-1 text-xs uppercase tracking-widest text-white" style={{ background: RED }}>
-        {t("Coming soon")}
-      </p>
-    </div>
   );
 }
 
@@ -545,7 +533,7 @@ export default function Home() {
             onUnreadCount={updateUnreadAlerts}
           />
         )}
-        {tab === "search" && <ComingSoon title="Search" text="Find people and posts." />}
+        {tab === "search" && <SearchView userId={session.user.id} onOpenProfile={openProfile} />}
 
         {tab === "profile" && (session || viewingId) && (
           <ProfileView
