@@ -104,7 +104,7 @@ export default function DatingView({
   const [profile, setProfile] = useState<DatingProfile>(emptyProfile);
   const [photos, setPhotos] = useState<DatingPhoto[]>([]);
   const [photoBusy, setPhotoBusy] = useState<PhotoSlot | null>(null);
-  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [birthDate, setBirthDate] = useState({ month: "", day: "", year: "" });
   const [savedDateOfBirth, setSavedDateOfBirth] = useState(false);
   const [adultAttested, setAdultAttested] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState("not_started");
@@ -144,7 +144,8 @@ export default function DatingView({
     }
 
     const savedDob = privateResult.data?.date_of_birth ?? "";
-    setDateOfBirth(savedDob);
+    const [year = "", month = "", day = ""] = savedDob.split("-");
+    setBirthDate(savedDob ? { month, day, year } : { month: "", day: "", year: "" });
     setSavedDateOfBirth(Boolean(savedDob));
     setAdultAttested(Boolean(savedDob));
     const savedProfile = profileResult.data ? { ...emptyProfile, ...profileResult.data } : emptyProfile;
@@ -216,11 +217,26 @@ export default function DatingView({
     if (!session) return;
     setError("");
     setNotice("");
-    if (!dateOfBirth || !adultAttested) {
+    if (!birthDate.month || !birthDate.day || !/^\d{4}$/.test(birthDate.year)) {
+      setError("Enter your full date of birth using month, day, and a four-digit year.");
+      return;
+    }
+    if (!adultAttested) {
       setError("Enter your date of birth and confirm that you are at least 18.");
       return;
     }
-    if (new Date(`${dateOfBirth}T00:00:00`) > new Date(new Date().getFullYear() - 18, new Date().getMonth(), new Date().getDate())) {
+    const dateOfBirth = `${birthDate.year}-${birthDate.month.padStart(2, "0")}-${birthDate.day.padStart(2, "0")}`;
+    const parsedDateOfBirth = new Date(`${dateOfBirth}T00:00:00`);
+    if (
+      Number.isNaN(parsedDateOfBirth.getTime())
+      || parsedDateOfBirth.getFullYear() !== Number(birthDate.year)
+      || parsedDateOfBirth.getMonth() !== Number(birthDate.month) - 1
+      || parsedDateOfBirth.getDate() !== Number(birthDate.day)
+    ) {
+      setError("Enter a valid date of birth.");
+      return;
+    }
+    if (parsedDateOfBirth > new Date(new Date().getFullYear() - 18, new Date().getMonth(), new Date().getDate())) {
       setError("Dating is only available to people who are at least 18.");
       return;
     }
@@ -488,13 +504,48 @@ export default function DatingView({
             </label>
             <label className="block text-sm">
               Date of birth (private)
-              <input
-                type="date"
-                required
-                value={dateOfBirth}
-                onChange={(event) => setDateOfBirth(event.target.value)}
-                className="mt-1 block w-full rounded border border-[#444] bg-[#0a0a0a] p-3 text-white"
-              />
+              <span className="mt-1 grid grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="bday-month"
+                  aria-label="Birth month"
+                  placeholder="MM"
+                  maxLength={2}
+                  pattern="[0-9]*"
+                  required
+                  value={birthDate.month}
+                  onChange={(event) => setBirthDate({ ...birthDate, month: event.target.value.replace(/\D/g, "").slice(0, 2) })}
+                  className="min-w-0 rounded border border-[#444] bg-[#0a0a0a] p-3 text-white"
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="bday-day"
+                  aria-label="Birth day"
+                  placeholder="DD"
+                  maxLength={2}
+                  pattern="[0-9]*"
+                  required
+                  value={birthDate.day}
+                  onChange={(event) => setBirthDate({ ...birthDate, day: event.target.value.replace(/\D/g, "").slice(0, 2) })}
+                  className="min-w-0 rounded border border-[#444] bg-[#0a0a0a] p-3 text-white"
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="bday-year"
+                  aria-label="Birth year"
+                  placeholder="YYYY"
+                  maxLength={4}
+                  pattern="[0-9]*"
+                  required
+                  value={birthDate.year}
+                  onChange={(event) => setBirthDate({ ...birthDate, year: event.target.value.replace(/\D/g, "").slice(0, 4) })}
+                  className="min-w-0 rounded border border-[#444] bg-[#0a0a0a] p-3 text-white"
+                />
+              </span>
+              <span className="mt-1 block text-xs text-gray-500">Enter month, day, and year. Use Tab to move between fields.</span>
             </label>
             <label className="flex items-start gap-2 text-sm text-gray-300">
               <input type="checkbox" checked={adultAttested} onChange={(event) => setAdultAttested(event.target.checked)} className="mt-1 accent-yellow-500" />
