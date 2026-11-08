@@ -43,6 +43,7 @@ export default function Welcome({
   msg,
   onLogIn,
   onSignUp,
+  onGoogleSignIn,
 }: {
   email: string;
   setEmail: (v: string) => void;
@@ -51,6 +52,7 @@ export default function Welcome({
   msg: string;
   onLogIn: () => void;
   onSignUp: () => void;
+  onGoogleSignIn: () => void;
 }) {
   const [agreed, setAgreed] = useState(false);
 
@@ -102,12 +104,6 @@ export default function Welcome({
             Log in
           </button>
 
-          <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-gray-500">
-            <div className="h-px flex-1 bg-[#2a2a2a]" />
-            New here?
-            <div className="h-px flex-1 bg-[#2a2a2a]" />
-          </div>
-
           <label className="flex items-start gap-2 text-sm text-gray-300">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)}
               className="mt-1" />
@@ -119,6 +115,23 @@ export default function Welcome({
             style={{ borderColor: GOLD, color: GOLD }}>
             Create account
           </button>
+
+          <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-gray-500">
+            <div className="h-px flex-1 bg-[#2a2a2a]" />
+            Or continue with
+            <div className="h-px flex-1 bg-[#2a2a2a]" />
+          </div>
+
+          <button
+            type="button"
+            onClick={onGoogleSignIn}
+            disabled={!agreed}
+            className="w-full rounded border border-[#444] bg-white py-3 font-semibold text-[#222] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Continue with Google
+          </button>
+
+          {!agreed && <p className="text-center text-xs text-gray-500">Check the box above to create an account or continue with Google.</p>}
 
           {msg && <p className="text-sm text-red-500">{msg}</p>}
         </div>

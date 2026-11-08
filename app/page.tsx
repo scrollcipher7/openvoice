@@ -197,6 +197,15 @@ export default function Home() {
     setMsg(error ? error.message : "");
   }
 
+  async function signInWithGoogle() {
+    setMsg("");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) setMsg(error.message);
+  }
+
   async function createPost(): Promise<boolean> {
     if (!session || posting) return false;
     let link = linkUrl.trim();
@@ -289,6 +298,7 @@ export default function Home() {
         msg={msg}
         onLogIn={logIn}
         onSignUp={signUp}
+        onGoogleSignIn={signInWithGoogle}
       />
     );
   }
