@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "893720002994",
+    "project_id": "openvoice-71dd6",
+    "storage_bucket": "openvoice-71dd6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:893720002994:android:382ad03fa0d337df85a4ab",
+        "android_client_info": {
+          "package_name": "com.openvoice.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC5qmHeB3njV4mWwuowFoylSQ7XdVBZ2G8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
