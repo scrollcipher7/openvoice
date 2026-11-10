@@ -4,7 +4,6 @@ import "./globals.css";
 import { LanguageProvider } from "./LanguageContext";
 import InstallApp from "./InstallApp";
 import NativeInitializer from "./NativeInitializer";
-import Script from "next/script";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,13 +36,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <Script
+      <head>
+        <meta name="google-adsense-account" content="ca-pub-4101694155261697" />
+        <script
           async
           src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4101694155261697"
           crossOrigin="anonymous"
-          strategy="afterInteractive"
-        />
+        ></script>
+      </head>
+      <body className="min-h-full flex flex-col">
         <NativeInitializer />
         <LanguageProvider>
           {children}
