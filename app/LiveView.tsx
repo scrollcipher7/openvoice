@@ -239,15 +239,15 @@ function LiveRoom({
     let active = true;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     const peerMap = peersRef.current;
-    const candidateMap = pendingCandidatesRef.current;
+    const pendingCandidatesMap = new Map<string, RTCIceCandidateInit[]>();
 
     const t = tRef.current;
-    const sessionId = sessionIdRef.current;
-    const myName = myNameRef.current;
+    const myId = sessionIdRef.current;
+    const myNameVal = myNameRef.current;
 
-    function sendSignal(signal: Signal) {
+    function broadcastSignal(payload: { kind: string; fromId: string; toId?: string; description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit }) {
       if (!channel) throw new Error(t("The Live connection is not ready yet."));
-      return channel.send({ type: "broadcast", event: "signal", payload: signal }).then((result) => {
+      return channel.send({ type: "broadcast", event: "signal", payload }).then((result) => {
         if (result !== "ok") throw new Error(t("Could not send Live connection data."));
       });
     }
@@ -258,178 +258,50 @@ function LiveRoom({
         current.peer.close();
         peerMap.delete(userId);
       }
-      candidateMap.delete(userId);
+      pendingCandidatesMap.delete(userId);
       setRemotes((items) => items.filter((item) => item.userId !== userId));
     }
 
-    function createPeer(participant: Participant): RTCPeerConnection {
-      console.log("[Live] createPeer for", participant.user_id.slice(0,5), "role=", participant.role, "myRole=", roleRef.current, "iceServers=", iceServersRef.current.length);
-      const connection = new RTCPeerConnection({ iceServers: iceServersRef.current, iceTransportPolicy: "all" });
-      const outgoingStream = localStreamRef.current;
-      if (outgoingStream && roleRef.current !== "viewer") {
-        console.log("[Live] adding tracks to peer, tracks:", outgoingStream.getTracks().map(t => t.kind));
-        outgoingStream.getTracks().forEach((track) => connection.addTrack(track, outgoingStream));
+    function buildPeer(remoteUserId: string): RTCPeerConnection {
+      console.log("[Live] buildPeer for", remoteUserId.slice(0, 6), "myRole=", roleRef.current, "iceServers=", iceServersRef.current.length);
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current, iceTransportPolicy: "all" });
+      const stream = localStreamRef.current;
+      if (stream && roleRef.current !== "viewer") {
+        console.log("[Live] adding tracks:", stream.getTracks().map((tr) => tr.kind));
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       } else {
-        console.log("[Live] no outgoing stream for peer, outgoingStream=", !!outgoingStream, "role=", roleRef.current);
+        console.log("[Live] no outgoing stream, stream=", !!stream, "role=", roleRef.current);
       }
-      // Viewers don't pre-add transceivers — setRemoteDescription from the host's offer
-      // will create the correct recvonly transceivers during negotiation.
-      peerMap.set(participant.user_id, { peer: connection, role: participant.role });
-      connection.onicecandidate = (event) => {
-        if (event.candidate) {
-          void sendSignal({
-            kind: "candidate",
-            fromId: sessionId,
-            toId: participant.user_id,
-            candidate: event.candidate.toJSON(),
-          }).catch((cause: unknown) => {
-            if (active) setError(cause instanceof Error ? cause.message : t("Could not send Live connection data."));
+      peerMap.set(remoteUserId, { peer: pc, role: "viewer" });
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          void broadcastSignal({ kind: "candidate", fromId: myId, toId: remoteUserId, candidate: e.candidate.toJSON() }).catch((c) => {
+            if (active) setError(c instanceof Error ? c.message : t("Could not send Live connection data."));
           });
         }
       };
-      connection.ontrack = (event) => {
-        console.log("[Live] ontrack fired! from=", participant.user_id.slice(0,5), "streams=", event.streams.length, "tracks=", event.streams[0]?.getTracks().map(t => t.kind));
-        const remote = event.streams[0];
-        if (!remote) return;
-        const person = participantsRef.current.get(participant.user_id) ?? participant;
+
+      pc.ontrack = (e) => {
+        console.log("[Live] *** ontrack *** from=", remoteUserId.slice(0, 6), "streams=", e.streams.length);
+        const s = e.streams[0];
+        if (!s) return;
+        const p = participantsRef.current.get(remoteUserId) ?? { user_id: remoteUserId, role: "host", name: "Remote" };
         setRemotes((items) => [
-          ...items.filter((item) => item.userId !== participant.user_id),
-          { userId: participant.user_id, name: person.name, role: person.role, stream: remote },
+          ...items.filter((it) => it.userId !== remoteUserId),
+          { userId: remoteUserId, name: p.name, role: p.role, stream: s },
         ]);
       };
-      connection.onconnectionstatechange = () => {
-        console.log("[Live] connection state change:", connection.connectionState, "to=", participant.user_id.slice(0,5));
-        if (connection.connectionState === "failed" && active) {
+
+      pc.onconnectionstatechange = () => {
+        console.log("[Live] state:", pc.connectionState, "to=", remoteUserId.slice(0, 6));
+        if (pc.connectionState === "failed" && active) {
           setError(t("A Live video connection failed. Check your connection."));
-          closePeer(participant.user_id);
+          closePeer(remoteUserId);
         }
       };
-      return connection;
-    }
 
-    function ensurePeer(participant: Participant): RTCPeerConnection | null {
-      if (participant.user_id === sessionId) return null;
-      if (iceServersRef.current.length === 0) return null;
-      const localRole = roleRef.current;
-      if (localRole === "viewer" && participant.role === "viewer") return null;
-      const existing = peerMap.get(participant.user_id);
-      if (existing && existing.role === participant.role) return existing.peer;
-      if (existing) closePeer(participant.user_id);
-      return createPeer(participant);
-    }
-
-    async function handlePresenceSync() {
-      if (!channel || !active) return;
-      console.log("[Live] presence sync fired, role=", roleRef.current, "sessionId=", sessionId);
-      const states = channel.presenceState<Participant>();
-      const next = new Map<string, Participant>();
-      for (const entries of Object.values(states)) {
-        for (const entry of entries) {
-          if (entry.user_id && entry.role && entry.name) next.set(entry.user_id, entry);
-        }
-      }
-      participantsRef.current = next;
-      const listed = [...next.values()];
-      console.log("[Live] participants after sync:", listed.map(p => `${p.user_id.slice(0,5)}... (${p.role})`));
-      setViewerCount(listed.filter((person) => person.role === "viewer").length);
-
-      for (const participant of listed) {
-        const peer = ensurePeer(participant);
-        if (!peer) {
-          console.log("[Live] ensurePeer returned null for", participant.user_id.slice(0,5), "role=", participant.role);
-          continue;
-        }
-        // Host always initiates offers to viewers/guests; viewers don't initiate to each other
-        const shouldInitiate = roleRef.current === "host" || (roleRef.current !== "viewer" && participant.role === "viewer");
-        if (!shouldInitiate) {
-          console.log("[Live] not initiating to", participant.user_id.slice(0,5), "shouldInitiate=", shouldInitiate);
-          continue;
-        }
-        if (peer.signalingState !== "stable" || peer.localDescription) {
-          console.log("[Live] peer not stable or has localDesc, state=", peer.signalingState, "hasLocalDesc=", !!peer.localDescription);
-          continue;
-        }
-        try {
-          console.log("[Live] creating offer for", participant.user_id.slice(0,5));
-          const offer = await peer.createOffer();
-          console.log("[Live] offer created, senders:", peer.getSenders().map(s => s.track?.kind || 'null'));
-          console.log("[Live] offer SDP has video:", offer.sdp?.includes('m=video') ?? false, "has audio:", offer.sdp?.includes('m=audio') ?? false);
-          await peer.setLocalDescription(offer);
-          await sendSignal({
-            kind: "offer",
-            fromId: sessionId,
-            toId: participant.user_id,
-            description: offer,
-          });
-          console.log("[Live] offer sent to", participant.user_id.slice(0,5));
-        } catch (cause) {
-          console.error("[Live] error creating/sending offer:", cause);
-          if (active) setError(cause instanceof Error ? cause.message : t("Could not start the Live video connection."));
-        }
-      }
-    }
-
-    async function handleSignal(signal: Signal) {
-      if (!active || signal.toId !== sessionId) {
-        if (signal.toId && signal.toId !== sessionId) {
-          console.log("[Live] signal not for me, toId=", signal.toId?.slice(0,5), "myId=", sessionId.slice(0,5));
-        }
-        return;
-      }
-      console.log("[Live] received signal:", signal.kind, "from=", signal.fromId?.slice(0,5), "role=", roleRef.current);
-      // Don't require the sender to be in the participant map — the presence sync may not
-      // have fired yet when the first offer arrives (race condition). Instead, derive a
-      // minimal participant from the signal so that ensurePeer can create the peer connection.
-      let participant = participantsRef.current.get(signal.fromId);
-      if (!participant) {
-        console.log("[Live] sender not in participant map, creating minimal entry");
-        participant = { user_id: signal.fromId, role: "host" as const, name: "Remote" };
-        participantsRef.current.set(signal.fromId, participant);
-      }
-      try {
-        const peer = ensurePeer(participant);
-        if (!peer) {
-          console.log("[Live] ensurePeer returned null in handleSignal");
-          return;
-        }
-        if (signal.kind === "offer") {
-          console.log("[Live] handling offer, role=", roleRef.current);
-          // Viewers need recvonly transceivers so createAnswer includes media sections
-          // telling the host to send video and audio. Without these, the answer may have
-          // no media sections and the host won't know to send anything.
-          if (roleRef.current === "viewer") {
-            peer.addTransceiver("video", { direction: "recvonly" });
-            peer.addTransceiver("audio", { direction: "recvonly" });
-          }
-          await peer.setRemoteDescription(signal.description);
-          for (const candidate of candidateMap.get(signal.fromId) ?? []) await peer.addIceCandidate(candidate);
-          candidateMap.delete(signal.fromId);
-          const answer = await peer.createAnswer();
-          console.log("[Live] answer created, senders:", peer.getSenders().map(s => s.track?.kind || 'null'));
-          console.log("[Live] answer SDP has video:", answer.sdp?.includes('m=video') ?? false, "has audio:", answer.sdp?.includes('m=audio') ?? false);
-          await peer.setLocalDescription(answer);
-          await sendSignal({
-            kind: "answer",
-            fromId: sessionId,
-            toId: signal.fromId,
-            description: answer,
-          });
-          console.log("[Live] answer sent to", signal.fromId.slice(0,5));
-        } else if (signal.kind === "answer") {
-          console.log("[Live] handling answer from", signal.fromId.slice(0,5));
-          await peer.setRemoteDescription(signal.description);
-          for (const candidate of candidateMap.get(signal.fromId) ?? []) await peer.addIceCandidate(candidate);
-          candidateMap.delete(signal.fromId);
-        } else if (peer.remoteDescription) {
-          await peer.addIceCandidate(signal.candidate);
-        } else {
-          candidateMap.set(signal.fromId, [...(candidateMap.get(signal.fromId) ?? []), signal.candidate]);
-          console.log("[Live] queued candidate for", signal.fromId.slice(0,5));
-        }
-      } catch (cause) {
-        console.error("[Live] error in handleSignal:", cause);
-        if (active) setError(cause instanceof Error ? cause.message : t("Could not connect to this Live."));
-      }
+      return pc;
     }
 
     async function connect() {
@@ -438,9 +310,10 @@ function LiveRoom({
         if (authError) throw new Error(authError.message);
         if (!authData.session) throw new Error(t("Sign in again before joining a Live."));
 
-        let turnProblem = "";
+        // Fetch TURN credentials
+        let turnOk = false;
         try {
-          console.log("[Live] fetching TURN credentials for live", live.id);
+          console.log("[Live] fetching TURN credentials");
           const response = await fetch("/api/dating/turn-credentials", {
             method: "POST",
             headers: {
@@ -449,71 +322,169 @@ function LiveRoom({
             },
             body: JSON.stringify({ targetLiveId: live.id }),
           });
-          console.log("[Live] TURN credential response status:", response.status);
+          console.log("[Live] TURN response:", response.status);
           const result = await response.json() as { iceServers?: RTCIceServer[]; error?: string };
-          console.log("[Live] TURN credential result:", result.error ?? `iceServers count: ${result.iceServers?.length ?? 0}`);
-          if (!response.ok) throw new Error(result.error || t("Live video is not configured."));
-          if (!result.iceServers?.length) throw new Error(t("No relay servers are configured for Live video."));
-          if (!active) return;
-          iceServersRef.current = result.iceServers;
-          console.log("[Live] TURN servers configured:", result.iceServers.length);
+          if (response.ok && result.iceServers?.length) {
+            iceServersRef.current = result.iceServers;
+            turnOk = true;
+            console.log("[Live] TURN configured:", result.iceServers.length);
+          } else {
+            console.warn("[Live] TURN not available:", result.error);
+          }
         } catch (cause) {
-          turnProblem = cause instanceof SyntaxError
-            ? "Live video is not available on this site yet."
-            : cause instanceof Error
-              ? cause.message
-              : "Live video is not available.";
-          console.error("[Live] TURN credential fetch failed:", turnProblem);
-          // Fallback: try with Google's public STUN server so at least peer-to-peer works
-          if (!active) return;
-          iceServersRef.current = [{ urls: "stun:stun.l.google.com:19302" }];
-          console.log("[Live] falling back to STUN-only (no TURN relay)");
+          console.warn("[Live] TURN fetch error:", cause);
         }
         if (!active) return;
-        if (turnProblem) {
-          console.warn("[Live] TURN unavailable, using fallback:", turnProblem);
-          setError(turnProblem);
+        if (!turnOk) {
+          iceServersRef.current = [{ urls: "stun:stun.l.google.com:19302" }];
+          console.log("[Live] using STUN fallback");
         }
 
+        // Create Supabase channel
         channel = supabase.channel(`${LIVE_TOPIC}${live.id}`, {
-          config: { private: true, broadcast: { self: false }, presence: { key: sessionId } },
+          config: { private: true, broadcast: { self: false }, presence: { key: myId } },
         });
         channelRef.current = channel;
-        channel
-          .on("presence", { event: "sync" }, () => void handlePresenceSync())
-          .on("broadcast", { event: "signal" }, ({ payload }) => {
-            if (payload && typeof payload === "object" && "kind" in payload) void handleSignal(payload as Signal);
-          })
-          .on("broadcast", { event: "chat-message" }, ({ payload }) => {
-            const message = (payload as { message?: LiveMessage } | null)?.message;
-            if (!message?.id || message.live_id !== live.id) return;
-            setMessages((items) => items.some((item) => item.id === message.id) ? items : [...items, message].slice(-100));
-          })
-          .subscribe(async (status) => {
-            console.log("[Live] channel subscribe status:", status);
-            if (!active) return;
-            if (status === "SUBSCRIBED") {
-              const trackResult = await channel?.track({
-                user_id: sessionId,
-                role: roleRef.current,
-                name: myName || t("OpenVoice member"),
-              });
-              if (trackResult !== "ok") setError(t("Live presence could not be started."));
-              setLoading(false);
-            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-              setLoading(false);
-              setError(t("Could not join this Live. Check the Supabase Realtime settings and migrations."));
-            }
-          });
 
+        // Handle incoming WebRTC signals
+        channel.on("broadcast", { event: "signal" }, ({ payload }) => {
+          if (!payload || typeof payload !== "object") return;
+          const sig = payload as { kind?: string; fromId?: string; toId?: string; description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
+          if (!sig.kind || !sig.fromId) return;
+          if (sig.fromId === myId) return; // skip own
+          console.log("[Live] signal:", sig.kind, "from=", sig.fromId?.slice(0, 6));
+          void handleIncomingSignal(sig as { kind: string; fromId: string; toId?: string; description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit });
+        });
+
+        // Handle chat messages
+        channel.on("broadcast", { event: "chat-message" }, ({ payload }) => {
+          const message = (payload as { message?: LiveMessage } | null)?.message;
+          if (!message?.id || message.live_id !== live.id) return;
+          setMessages((items) => items.some((item) => item.id === message.id) ? items : [...items, message].slice(-100));
+        });
+
+        // Handle presence sync — just track viewer count
+        channel.on("presence", { event: "sync" }, () => {
+          if (!channel || !active) return;
+          const states = channel.presenceState<Participant>();
+          const next = new Map<string, Participant>();
+          for (const entries of Object.values(states)) {
+            for (const entry of entries) {
+              if (entry.user_id && entry.role && entry.name) next.set(entry.user_id, entry);
+            }
+          }
+          participantsRef.current = next;
+          const listed = [...next.values()];
+          console.log("[Live] presence:", listed.map((p) => `${p.user_id.slice(0, 6)} (${p.role})`));
+          setViewerCount(listed.filter((p) => p.role === "viewer").length);
+        });
+
+        async function handleIncomingSignal(sig: { kind: string; fromId: string; toId?: string; description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit }) {
+          if (!active) return;
+          const remoteId = sig.fromId;
+          let pc = peerMap.get(remoteId)?.peer;
+
+          if (!pc) {
+            // For viewers: any offer means the host is sending video — accept it
+            // For hosts: any answer/candidate from a viewer — handle it
+            if (sig.kind === "offer" && roleRef.current === "viewer") {
+              pc = buildPeer(remoteId);
+              // Add recvonly transceivers before setRemoteDescription
+              pc.addTransceiver("video", { direction: "recvonly" });
+              pc.addTransceiver("audio", { direction: "recvonly" });
+            } else if (sig.kind === "request-offer" && roleRef.current === "host") {
+              // A viewer wants video — create peer and send offer
+              pc = buildPeer(remoteId);
+              participantsRef.current.set(remoteId, { user_id: remoteId, role: "viewer", name: "Viewer" });
+            } else {
+              // answer/candidate for existing peer
+              if (!pc) return;
+            }
+          }
+
+          try {
+            if (sig.kind === "offer" && roleRef.current === "viewer") {
+              console.log("[Live] accepting offer from", remoteId.slice(0, 6));
+              await pc!.setRemoteDescription(sig.description!);
+              for (const c of pendingCandidatesMap.get(remoteId) ?? []) await pc!.addIceCandidate(c);
+              pendingCandidatesMap.delete(remoteId);
+              const answer = await pc!.createAnswer();
+              console.log("[Live] answer SDP video:", answer.sdp?.includes("m=video"), "audio:", answer.sdp?.includes("m=audio"));
+              await pc!.setLocalDescription(answer);
+              await broadcastSignal({ kind: "answer", fromId: myId, toId: remoteId, description: answer });
+              console.log("[Live] answer sent");
+            } else if (sig.kind === "answer" && roleRef.current !== "viewer") {
+              console.log("[Live] got answer from", remoteId.slice(0, 6));
+              await pc.setRemoteDescription(sig.description!);
+              for (const c of pendingCandidatesMap.get(remoteId) ?? []) await pc.addIceCandidate(c);
+              pendingCandidatesMap.delete(remoteId);
+            } else if (sig.kind === "candidate") {
+              if (pc.remoteDescription) {
+                await pc.addIceCandidate(sig.candidate!);
+              } else {
+                pendingCandidatesMap.set(remoteId, [...(pendingCandidatesMap.get(remoteId) ?? []), sig.candidate!]);
+              }
+            } else if (sig.kind === "request-offer" && roleRef.current === "host") {
+              console.log("[Live] sending offer to", remoteId.slice(0, 6));
+              const offer = await pc!.createOffer();
+              console.log("[Live] offer SDP video:", offer.sdp?.includes("m=video"), "audio:", offer.sdp?.includes("m=audio"), "senders:", pc!.getSenders().map((s) => s.track?.kind));
+              await pc!.setLocalDescription(offer);
+              await broadcastSignal({ kind: "offer", fromId: myId, toId: remoteId, description: offer });
+              console.log("[Live] offer sent");
+            }
+          } catch (cause) {
+            console.error("[Live] signal error:", cause);
+            if (active) setError(cause instanceof Error ? cause.message : t("Could not connect to this Live."));
+          }
+        }
+
+        channel.subscribe(async (status) => {
+          console.log("[Live] subscribe:", status);
+          if (!active) return;
+          if (status === "SUBSCRIBED") {
+            await channel?.track({
+              user_id: myId,
+              role: roleRef.current,
+              name: myNameVal || t("OpenVoice member"),
+            });
+            setLoading(false);
+
+            // If viewer: request an offer from the host
+            if (roleRef.current === "viewer") {
+              console.log("[Live] viewer requesting offer");
+              // Find the host from presence state
+              const states = channel!.presenceState<Participant>();
+              let hostId: string | null = null;
+              for (const entries of Object.values(states)) {
+                for (const entry of entries) {
+                  if (entry.role === "host") hostId = entry.user_id;
+                }
+              }
+              if (hostId) {
+                console.log("[Live] found host:", hostId.slice(0, 6));
+                participantsRef.current.set(hostId, { user_id: hostId, role: "host", name: "Host" });
+                await broadcastSignal({ kind: "request-offer", fromId: myId, toId: hostId }).catch((c) => {
+                  console.error("[Live] request-offer failed:", c);
+                  if (active) setError(t("Could not request video from host."));
+                });
+              } else {
+                console.warn("[Live] no host found in presence");
+              }
+            }
+          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            setLoading(false);
+            setError(t("Could not join this Live. Check the Supabase Realtime settings and migrations."));
+          }
+        });
+
+        // Load chat history
         const { data: priorMessages, error: messagesError } = await supabase
           .from("live_chat_messages")
           .select("id, live_id, user_id, content, created_at, profiles!live_chat_messages_user_id_fkey(display_name, username)")
           .eq("live_id", live.id)
           .order("created_at", { ascending: false })
           .limit(100);
-        if (messagesError) throw new Error(messagesError.message);
-        if (active) {
+        if (!messagesError && active) {
           const list = (priorMessages ?? []).reverse().map((row) => {
             const item = row as unknown as {
               id: string; live_id: string; user_id: string; content: string; created_at: string;
@@ -539,7 +510,6 @@ function LiveRoom({
       channelRef.current = null;
       peerMap.forEach(({ peer }) => peer.close());
       peerMap.clear();
-      candidateMap.clear();
     };
   }, [live.id]);
 
