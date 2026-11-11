@@ -348,9 +348,15 @@ function LiveRoom({
     }
 
     async function handleSignal(signal: Signal) {
-      if (!active || signal.toId !== sessionId || !participantsRef.current.has(signal.fromId)) return;
-      const participant = participantsRef.current.get(signal.fromId);
-      if (!participant) return;
+      if (!active || signal.toId !== sessionId) return;
+      // Don't require the sender to be in the participant map — the presence sync may not
+      // have fired yet when the first offer arrives (race condition). Instead, derive a
+      // minimal participant from the signal so that ensurePeer can create the peer connection.
+      let participant = participantsRef.current.get(signal.fromId);
+      if (!participant) {
+        participant = { user_id: signal.fromId, role: "host" as const, name: "Remote" };
+        participantsRef.current.set(signal.fromId, participant);
+      }
       try {
         const peer = ensurePeer(participant);
         if (!peer) return;
