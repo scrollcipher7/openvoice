@@ -452,7 +452,6 @@ function LiveRoom({
             // If viewer: request an offer from the host
             if (roleRef.current === "viewer") {
               console.log("[Live] viewer requesting offer");
-              // Find the host from presence state
               const states = channel!.presenceState<Participant>();
               let hostId: string | null = null;
               for (const entries of Object.values(states)) {
@@ -468,8 +467,33 @@ function LiveRoom({
                   if (active) setError(t("Could not request video from host."));
                 });
               } else {
-                console.warn("[Live] no host found in presence");
+                console.warn("[Live] no host found in presence, will retry");
               }
+
+              // Retry requesting offer every 3s if no peer connecting yet
+              let retryCount = 0;
+              const retryInterval = window.setInterval(() => {
+                if (!active) { window.clearInterval(retryInterval); return; }
+                const hasPeer = [...peerMap.values()].some(({ peer }) => peer.connectionState === "connected" || peer.connectionState === "connecting");
+                if (hasPeer) { window.clearInterval(retryInterval); return; }
+                retryCount++;
+                if (retryCount > 10) {
+                  window.clearInterval(retryInterval);
+                  if (active) setError(t("Could not connect to the host video. Try refreshing."));
+                  return;
+                }
+                console.log("[Live] retry request-offer (", retryCount, ")");
+                const st = channel?.presenceState<Participant>();
+                let hId: string | null = null;
+                if (st) {
+                  for (const entries of Object.values(st)) {
+                    for (const entry of entries) {
+                      if (entry.role === "host") hId = entry.user_id;
+                    }
+                  }
+                }
+                if (hId) void broadcastSignal({ kind: "request-offer", fromId: myId, toId: hId }).catch(() => {});
+              }, 3000);
             }
           } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
             setLoading(false);
