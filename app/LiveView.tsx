@@ -65,11 +65,15 @@ function LiveVideo({ stream, muted = false, className }: { stream: MediaStream; 
     if (!video) return;
     let active = true;
     const startPlayback = () => {
+      const tracks = stream.getTracks();
+      console.log("[Live] LiveVideo play tracks:", tracks.map((tr) => `${tr.kind} enabled=${tr.enabled}`), "muted=", muted, "video.muted=", video.muted);
       void video.play().then(() => {
+        console.log("[Live] LiveVideo playing, video.muted:", video.muted);
         if (active) setPlaybackBlocked(false);
       }).catch((cause: unknown) => {
         if (!active) return;
         if (cause instanceof DOMException && cause.name === "AbortError") return;
+        console.warn("[Live] LiveVideo play failed:", cause);
         setPlaybackBlocked(true);
       });
     };
@@ -82,7 +86,7 @@ function LiveVideo({ stream, muted = false, className }: { stream: MediaStream; 
       video.pause();
       video.srcObject = null;
     };
-  }, [stream]);
+  }, [stream, muted]);
 
   return (
     <>
@@ -286,6 +290,8 @@ function LiveRoom({
         console.log("[Live] *** ontrack *** from=", remoteUserId.slice(0, 6), "streams=", e.streams.length);
         const s = e.streams[0];
         if (!s) return;
+        const tracks = s.getTracks();
+        console.log("[Live] ontrack tracks:", tracks.map((tr) => `${tr.kind} enabled=${tr.enabled} muted=${tr.muted} readyState=${tr.readyState}`));
         const p = participantsRef.current.get(remoteUserId) ?? { user_id: remoteUserId, role: "host", name: "Remote" };
         setRemotes((items) => [
           ...items.filter((it) => it.userId !== remoteUserId),
