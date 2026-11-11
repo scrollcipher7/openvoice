@@ -66,10 +66,16 @@ function LiveVideo({ stream, muted = false, className }: { stream: MediaStream; 
     let active = true;
     const startPlayback = () => {
       const tracks = stream.getTracks();
-      console.log("[Live] LiveVideo play tracks:", tracks.map((tr) => `${tr.kind} enabled=${tr.enabled}`), "muted=", muted, "video.muted=", video.muted);
+      console.log("[Live] LiveVideo play tracks:", tracks.map((tr) => `${tr.kind} enabled=${tr.enabled}`), "muted=", muted);
+      // Start muted to bypass autoplay policy, then unmute if requested
+      video.muted = true;
       void video.play().then(() => {
-        console.log("[Live] LiveVideo playing, video.muted:", video.muted);
-        if (active) setPlaybackBlocked(false);
+        if (!active) return;
+        if (!muted) {
+          video.muted = false;
+          console.log("[Live] LiveVideo unmuted after play");
+        }
+        setPlaybackBlocked(false);
       }).catch((cause: unknown) => {
         if (!active) return;
         if (cause instanceof DOMException && cause.name === "AbortError") return;
