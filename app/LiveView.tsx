@@ -264,7 +264,7 @@ function LiveRoom({
 
     function createPeer(participant: Participant): RTCPeerConnection {
       console.log("[Live] createPeer for", participant.user_id.slice(0,5), "role=", participant.role, "myRole=", roleRef.current, "iceServers=", iceServersRef.current.length);
-      const connection = new RTCPeerConnection({ iceServers: iceServersRef.current, iceTransportPolicy: "relay" });
+      const connection = new RTCPeerConnection({ iceServers: iceServersRef.current, iceTransportPolicy: "all" });
       const outgoingStream = localStreamRef.current;
       if (outgoingStream && roleRef.current !== "viewer") {
         console.log("[Live] adding tracks to peer, tracks:", outgoingStream.getTracks().map(t => t.kind));
@@ -353,6 +353,7 @@ function LiveRoom({
           console.log("[Live] creating offer for", participant.user_id.slice(0,5));
           const offer = await peer.createOffer();
           console.log("[Live] offer created, senders:", peer.getSenders().map(s => s.track?.kind || 'null'));
+          console.log("[Live] offer SDP has video:", offer.sdp?.includes('m=video') ?? false, "has audio:", offer.sdp?.includes('m=audio') ?? false);
           await peer.setLocalDescription(offer);
           await sendSignal({
             kind: "offer",
@@ -405,6 +406,7 @@ function LiveRoom({
           candidateMap.delete(signal.fromId);
           const answer = await peer.createAnswer();
           console.log("[Live] answer created, senders:", peer.getSenders().map(s => s.track?.kind || 'null'));
+          console.log("[Live] answer SDP has video:", answer.sdp?.includes('m=video') ?? false, "has audio:", answer.sdp?.includes('m=audio') ?? false);
           await peer.setLocalDescription(answer);
           await sendSignal({
             kind: "answer",
@@ -438,6 +440,7 @@ function LiveRoom({
 
         let turnProblem = "";
         try {
+          console.log("[Live] fetching TURN credentials for live", live.id);
           const response = await fetch("/api/dating/turn-credentials", {
             method: "POST",
             headers: {
@@ -446,20 +449,31 @@ function LiveRoom({
             },
             body: JSON.stringify({ targetLiveId: live.id }),
           });
+          console.log("[Live] TURN credential response status:", response.status);
           const result = await response.json() as { iceServers?: RTCIceServer[]; error?: string };
+          console.log("[Live] TURN credential result:", result.error ?? `iceServers count: ${result.iceServers?.length ?? 0}`);
           if (!response.ok) throw new Error(result.error || t("Live video is not configured."));
           if (!result.iceServers?.length) throw new Error(t("No relay servers are configured for Live video."));
           if (!active) return;
           iceServersRef.current = result.iceServers;
+          console.log("[Live] TURN servers configured:", result.iceServers.length);
         } catch (cause) {
           turnProblem = cause instanceof SyntaxError
             ? "Live video is not available on this site yet."
             : cause instanceof Error
               ? cause.message
               : "Live video is not available.";
+          console.error("[Live] TURN credential fetch failed:", turnProblem);
+          // Fallback: try with Google's public STUN server so at least peer-to-peer works
+          if (!active) return;
+          iceServersRef.current = [{ urls: "stun:stun.l.google.com:19302" }];
+          console.log("[Live] falling back to STUN-only (no TURN relay)");
         }
         if (!active) return;
-        if (turnProblem) setError(turnProblem);
+        if (turnProblem) {
+          console.warn("[Live] TURN unavailable, using fallback:", turnProblem);
+          setError(turnProblem);
+        }
 
         channel = supabase.channel(`${LIVE_TOPIC}${live.id}`, {
           config: { private: true, broadcast: { self: false }, presence: { key: sessionId } },
@@ -476,6 +490,7 @@ function LiveRoom({
             setMessages((items) => items.some((item) => item.id === message.id) ? items : [...items, message].slice(-100));
           })
           .subscribe(async (status) => {
+            console.log("[Live] channel subscribe status:", status);
             if (!active) return;
             if (status === "SUBSCRIBED") {
               const trackResult = await channel?.track({
