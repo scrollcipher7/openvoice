@@ -361,6 +361,13 @@ function LiveRoom({
         const peer = ensurePeer(participant);
         if (!peer) return;
         if (signal.kind === "offer") {
+          // Viewers need recvonly transceivers so createAnswer includes media sections
+          // telling the host to send video and audio. Without these, the answer may have
+          // no media sections and the host won't know to send anything.
+          if (roleRef.current === "viewer") {
+            peer.addTransceiver("video", { direction: "recvonly" });
+            peer.addTransceiver("audio", { direction: "recvonly" });
+          }
           await peer.setRemoteDescription(signal.description);
           for (const candidate of candidateMap.get(signal.fromId) ?? []) await peer.addIceCandidate(candidate);
           candidateMap.delete(signal.fromId);
