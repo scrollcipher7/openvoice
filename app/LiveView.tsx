@@ -276,7 +276,10 @@ function LiveRoom({
 
       for (const participant of listed) {
         const peer = ensurePeer(participant);
-        if (!peer || session.user.id.localeCompare(participant.user_id) >= 0) continue;
+        if (!peer) continue;
+        // Host always initiates offers to viewers/guests; viewers don't initiate to each other
+        const shouldInitiate = roleRef.current === "host" || (roleRef.current !== "viewer" && participant.role === "viewer");
+        if (!shouldInitiate) continue;
         if (peer.signalingState !== "stable" || peer.localDescription) continue;
         try {
           const offer = await peer.createOffer();
