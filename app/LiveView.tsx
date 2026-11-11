@@ -263,10 +263,14 @@ function LiveRoom({
     }
 
     function createPeer(participant: Participant): RTCPeerConnection {
+      console.log("[Live] createPeer for", participant.user_id.slice(0,5), "role=", participant.role, "myRole=", roleRef.current, "iceServers=", iceServersRef.current.length);
       const connection = new RTCPeerConnection({ iceServers: iceServersRef.current, iceTransportPolicy: "relay" });
       const outgoingStream = localStreamRef.current;
       if (outgoingStream && roleRef.current !== "viewer") {
+        console.log("[Live] adding tracks to peer, tracks:", outgoingStream.getTracks().map(t => t.kind));
         outgoingStream.getTracks().forEach((track) => connection.addTrack(track, outgoingStream));
+      } else {
+        console.log("[Live] no outgoing stream for peer, outgoingStream=", !!outgoingStream, "role=", roleRef.current);
       }
       // Viewers don't pre-add transceivers — setRemoteDescription from the host's offer
       // will create the correct recvonly transceivers during negotiation.
@@ -284,6 +288,7 @@ function LiveRoom({
         }
       };
       connection.ontrack = (event) => {
+        console.log("[Live] ontrack fired! from=", participant.user_id.slice(0,5), "streams=", event.streams.length, "tracks=", event.streams[0]?.getTracks().map(t => t.kind));
         const remote = event.streams[0];
         if (!remote) return;
         const person = participantsRef.current.get(participant.user_id) ?? participant;
@@ -293,6 +298,7 @@ function LiveRoom({
         ]);
       };
       connection.onconnectionstatechange = () => {
+        console.log("[Live] connection state change:", connection.connectionState, "to=", participant.user_id.slice(0,5));
         if (connection.connectionState === "failed" && active) {
           setError(t("A Live video connection failed. Check your connection."));
           closePeer(participant.user_id);
@@ -314,6 +320,7 @@ function LiveRoom({
 
     async function handlePresenceSync() {
       if (!channel || !active) return;
+      console.log("[Live] presence sync fired, role=", roleRef.current, "sessionId=", sessionId);
       const states = channel.presenceState<Participant>();
       const next = new Map<string, Participant>();
       for (const entries of Object.values(states)) {
@@ -323,17 +330,29 @@ function LiveRoom({
       }
       participantsRef.current = next;
       const listed = [...next.values()];
+      console.log("[Live] participants after sync:", listed.map(p => `${p.user_id.slice(0,5)}... (${p.role})`));
       setViewerCount(listed.filter((person) => person.role === "viewer").length);
 
       for (const participant of listed) {
         const peer = ensurePeer(participant);
-        if (!peer) continue;
+        if (!peer) {
+          console.log("[Live] ensurePeer returned null for", participant.user_id.slice(0,5), "role=", participant.role);
+          continue;
+        }
         // Host always initiates offers to viewers/guests; viewers don't initiate to each other
         const shouldInitiate = roleRef.current === "host" || (roleRef.current !== "viewer" && participant.role === "viewer");
-        if (!shouldInitiate) continue;
-        if (peer.signalingState !== "stable" || peer.localDescription) continue;
+        if (!shouldInitiate) {
+          console.log("[Live] not initiating to", participant.user_id.slice(0,5), "shouldInitiate=", shouldInitiate);
+          continue;
+        }
+        if (peer.signalingState !== "stable" || peer.localDescription) {
+          console.log("[Live] peer not stable or has localDesc, state=", peer.signalingState, "hasLocalDesc=", !!peer.localDescription);
+          continue;
+        }
         try {
+          console.log("[Live] creating offer for", participant.user_id.slice(0,5));
           const offer = await peer.createOffer();
+          console.log("[Live] offer created, senders:", peer.getSenders().map(s => s.track?.kind || 'null'));
           await peer.setLocalDescription(offer);
           await sendSignal({
             kind: "offer",
@@ -341,26 +360,39 @@ function LiveRoom({
             toId: participant.user_id,
             description: offer,
           });
+          console.log("[Live] offer sent to", participant.user_id.slice(0,5));
         } catch (cause) {
+          console.error("[Live] error creating/sending offer:", cause);
           if (active) setError(cause instanceof Error ? cause.message : t("Could not start the Live video connection."));
         }
       }
     }
 
     async function handleSignal(signal: Signal) {
-      if (!active || signal.toId !== sessionId) return;
+      if (!active || signal.toId !== sessionId) {
+        if (signal.toId && signal.toId !== sessionId) {
+          console.log("[Live] signal not for me, toId=", signal.toId?.slice(0,5), "myId=", sessionId.slice(0,5));
+        }
+        return;
+      }
+      console.log("[Live] received signal:", signal.kind, "from=", signal.fromId?.slice(0,5), "role=", roleRef.current);
       // Don't require the sender to be in the participant map — the presence sync may not
       // have fired yet when the first offer arrives (race condition). Instead, derive a
       // minimal participant from the signal so that ensurePeer can create the peer connection.
       let participant = participantsRef.current.get(signal.fromId);
       if (!participant) {
+        console.log("[Live] sender not in participant map, creating minimal entry");
         participant = { user_id: signal.fromId, role: "host" as const, name: "Remote" };
         participantsRef.current.set(signal.fromId, participant);
       }
       try {
         const peer = ensurePeer(participant);
-        if (!peer) return;
+        if (!peer) {
+          console.log("[Live] ensurePeer returned null in handleSignal");
+          return;
+        }
         if (signal.kind === "offer") {
+          console.log("[Live] handling offer, role=", roleRef.current);
           // Viewers need recvonly transceivers so createAnswer includes media sections
           // telling the host to send video and audio. Without these, the answer may have
           // no media sections and the host won't know to send anything.
@@ -372,6 +404,7 @@ function LiveRoom({
           for (const candidate of candidateMap.get(signal.fromId) ?? []) await peer.addIceCandidate(candidate);
           candidateMap.delete(signal.fromId);
           const answer = await peer.createAnswer();
+          console.log("[Live] answer created, senders:", peer.getSenders().map(s => s.track?.kind || 'null'));
           await peer.setLocalDescription(answer);
           await sendSignal({
             kind: "answer",
@@ -379,7 +412,9 @@ function LiveRoom({
             toId: signal.fromId,
             description: answer,
           });
+          console.log("[Live] answer sent to", signal.fromId.slice(0,5));
         } else if (signal.kind === "answer") {
+          console.log("[Live] handling answer from", signal.fromId.slice(0,5));
           await peer.setRemoteDescription(signal.description);
           for (const candidate of candidateMap.get(signal.fromId) ?? []) await peer.addIceCandidate(candidate);
           candidateMap.delete(signal.fromId);
@@ -387,8 +422,10 @@ function LiveRoom({
           await peer.addIceCandidate(signal.candidate);
         } else {
           candidateMap.set(signal.fromId, [...(candidateMap.get(signal.fromId) ?? []), signal.candidate]);
+          console.log("[Live] queued candidate for", signal.fromId.slice(0,5));
         }
       } catch (cause) {
+        console.error("[Live] error in handleSignal:", cause);
         if (active) setError(cause instanceof Error ? cause.message : t("Could not connect to this Live."));
       }
     }
