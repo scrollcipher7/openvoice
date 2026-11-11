@@ -267,10 +267,9 @@ function LiveRoom({
       const outgoingStream = localStreamRef.current;
       if (outgoingStream && roleRef.current !== "viewer") {
         outgoingStream.getTracks().forEach((track) => connection.addTrack(track, outgoingStream));
-      } else {
-        connection.addTransceiver("video", { direction: "recvonly" });
-        connection.addTransceiver("audio", { direction: "recvonly" });
       }
+      // Viewers don't pre-add transceivers — setRemoteDescription from the host's offer
+      // will create the correct recvonly transceivers during negotiation.
       peerMap.set(participant.user_id, { peer: connection, role: participant.role });
       connection.onicecandidate = (event) => {
         if (event.candidate) {
