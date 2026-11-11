@@ -252,6 +252,7 @@ function LiveRoom({
 
     function ensurePeer(participant: Participant): RTCPeerConnection | null {
       if (participant.user_id === session.user.id) return null;
+      if (iceServersRef.current.length === 0) return null;
       const localRole = roleRef.current;
       if (localRole === "viewer" && participant.role === "viewer") return null;
       const existing = peerMap.get(participant.user_id);
@@ -330,19 +331,31 @@ function LiveRoom({
         const { data: authData, error: authError } = await supabase.auth.getSession();
         if (authError) throw new Error(authError.message);
         if (!authData.session) throw new Error(t("Sign in again before joining a Live."));
-        const response = await fetch("/api/dating/turn-credentials", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authData.session.access_token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ targetLiveId: live.id }),
-        });
-        const result = await response.json() as { iceServers?: RTCIceServer[]; error?: string };
-        if (!response.ok) throw new Error(result.error || t("Live video is not configured."));
-        if (!result.iceServers?.length) throw new Error(t("No relay servers are configured for Live video."));
+
+        let turnProblem = "";
+        try {
+          const response = await fetch("/api/dating/turn-credentials", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${authData.session.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ targetLiveId: live.id }),
+          });
+          const result = await response.json() as { iceServers?: RTCIceServer[]; error?: string };
+          if (!response.ok) throw new Error(result.error || t("Live video is not configured."));
+          if (!result.iceServers?.length) throw new Error(t("No relay servers are configured for Live video."));
+          if (!active) return;
+          iceServersRef.current = result.iceServers;
+        } catch (cause) {
+          turnProblem = cause instanceof SyntaxError
+            ? "Live video is not available on this site yet."
+            : cause instanceof Error
+              ? cause.message
+              : "Live video is not available.";
+        }
         if (!active) return;
-        iceServersRef.current = result.iceServers;
+        if (turnProblem) setError(turnProblem);
 
         channel = supabase.channel(`${LIVE_TOPIC}${live.id}`, {
           config: { private: true, broadcast: { self: false }, presence: { key: session.user.id } },
