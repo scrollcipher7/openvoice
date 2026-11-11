@@ -660,15 +660,52 @@ function LiveRoom({
   }
 
   async function requestToJoin() {
+    if (busy || guestRequestId) return;
     setBusy(true);
     setError("");
-    const { data, error: requestError } = await supabase.rpc("request_live_guest", { target_live: live.id });
-    if (requestError) setError(t(requestError.message));
-    else {
-      setGuestRequestId(data);
-      setGuestRequestStatus(t("Request sent. Waiting for the host."));
+    try {
+      // Check if there's already a pending request
+      const { data: existing } = await supabase
+        .from("live_guest_requests")
+        .select("id, status")
+        .eq("live_id", live.id)
+        .eq("user_id", session.user.id)
+        .in("status", ["pending", "approved"])
+        .maybeSingle();
+      if (existing) {
+        setGuestRequestId(existing.id);
+        setGuestRequestStatus(existing.status === "approved"
+          ? t("You have been approved. Waiting to join...")
+          : t("Request sent. Waiting for the host."));
+        return;
+      }
+      const { data, error: requestError } = await supabase.rpc("request_live_guest", { target_live: live.id });
+      if (requestError) {
+        // If duplicate key error, a request was already created — fetch it
+        if (requestError.message?.includes("duplicate key")) {
+          const { data: fallback } = await supabase
+            .from("live_guest_requests")
+            .select("id, status")
+            .eq("live_id", live.id)
+            .eq("user_id", session.user.id)
+            .in("status", ["pending", "approved"])
+            .maybeSingle();
+          if (fallback) {
+            setGuestRequestId(fallback.id);
+            setGuestRequestStatus(t("Request sent. Waiting for the host."));
+          }
+        } else {
+          setError(t(requestError.message));
+        }
+      } else {
+        setGuestRequestId(data);
+        setGuestRequestStatus(t("Request sent. Waiting for the host."));
+      }
+    } catch {
+      setError(t("Could not send your request to join."));
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   async function hostDecision(request: GuestRequest, approve: boolean) {
