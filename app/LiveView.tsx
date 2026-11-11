@@ -161,6 +161,9 @@ function LiveRoom({
   const participantsRef = useRef(new Map<string, Participant>());
   const peersRef = useRef(new Map<string, PeerState>());
   const pendingCandidatesRef = useRef(new Map<string, RTCIceCandidateInit[]>());
+  const sessionIdRef = useRef(session.user.id);
+  const myNameRef = useRef(myName);
+  const tRef = useRef(t);
 
   const setRoomRole = useCallback((next: RoomRole) => {
     roleRef.current = next;
@@ -171,6 +174,11 @@ function LiveRoom({
     localStreamRef.current = next;
     setLocalStream(next);
   }, []);
+
+  // Keep refs in sync so the main WebRTC effect doesn't need volatile deps
+  useEffect(() => { sessionIdRef.current = session.user.id; }, [session.user.id]);
+  useEffect(() => { myNameRef.current = myName; }, [myName]);
+  useEffect(() => { tRef.current = t; }, [t]);
 
   const loadGuestRequests = useCallback(async () => {
     if (roleRef.current !== "host") return;
@@ -192,6 +200,10 @@ function LiveRoom({
     let channel: ReturnType<typeof supabase.channel> | null = null;
     const peerMap = peersRef.current;
     const candidateMap = pendingCandidatesRef.current;
+
+    const t = tRef.current;
+    const sessionId = sessionIdRef.current;
+    const myName = myNameRef.current;
 
     function sendSignal(signal: Signal) {
       if (!channel) throw new Error(t("The Live connection is not ready yet."));
@@ -224,7 +236,7 @@ function LiveRoom({
         if (event.candidate) {
           void sendSignal({
             kind: "candidate",
-            fromId: session.user.id,
+            fromId: sessionId,
             toId: participant.user_id,
             candidate: event.candidate.toJSON(),
           }).catch((cause: unknown) => {
@@ -251,7 +263,7 @@ function LiveRoom({
     }
 
     function ensurePeer(participant: Participant): RTCPeerConnection | null {
-      if (participant.user_id === session.user.id) return null;
+      if (participant.user_id === sessionId) return null;
       if (iceServersRef.current.length === 0) return null;
       const localRole = roleRef.current;
       if (localRole === "viewer" && participant.role === "viewer") return null;
@@ -286,7 +298,7 @@ function LiveRoom({
           await peer.setLocalDescription(offer);
           await sendSignal({
             kind: "offer",
-            fromId: session.user.id,
+            fromId: sessionId,
             toId: participant.user_id,
             description: offer,
           });
@@ -297,7 +309,7 @@ function LiveRoom({
     }
 
     async function handleSignal(signal: Signal) {
-      if (!active || signal.toId !== session.user.id || !participantsRef.current.has(signal.fromId)) return;
+      if (!active || signal.toId !== sessionId || !participantsRef.current.has(signal.fromId)) return;
       const participant = participantsRef.current.get(signal.fromId);
       if (!participant) return;
       try {
@@ -311,7 +323,7 @@ function LiveRoom({
           await peer.setLocalDescription(answer);
           await sendSignal({
             kind: "answer",
-            fromId: session.user.id,
+            fromId: sessionId,
             toId: signal.fromId,
             description: answer,
           });
@@ -361,7 +373,7 @@ function LiveRoom({
         if (turnProblem) setError(turnProblem);
 
         channel = supabase.channel(`${LIVE_TOPIC}${live.id}`, {
-          config: { private: true, broadcast: { self: false }, presence: { key: session.user.id } },
+          config: { private: true, broadcast: { self: false }, presence: { key: sessionId } },
         });
         channelRef.current = channel;
         channel
@@ -378,7 +390,7 @@ function LiveRoom({
             if (!active) return;
             if (status === "SUBSCRIBED") {
               const trackResult = await channel?.track({
-                user_id: session.user.id,
+                user_id: sessionId,
                 role: roleRef.current,
                 name: myName || t("OpenVoice member"),
               });
@@ -425,7 +437,7 @@ function LiveRoom({
       peerMap.clear();
       candidateMap.clear();
     };
-  }, [live.id, myName, session, t]);
+  }, [live.id]);
 
   useEffect(() => {
     const channel = channelRef.current;
