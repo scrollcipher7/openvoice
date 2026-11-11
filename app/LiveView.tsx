@@ -421,8 +421,6 @@ function LiveRoom({
       peerMap.forEach(({ peer }) => peer.close());
       peerMap.clear();
       candidateMap.clear();
-      localStreamRef.current?.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
     };
   }, [live.id, myName, session, t]);
 
