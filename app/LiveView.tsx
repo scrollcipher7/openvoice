@@ -180,6 +180,46 @@ function LiveRoom({
   useEffect(() => { myNameRef.current = myName; }, [myName]);
   useEffect(() => { tRef.current = t; }, [t]);
 
+  // Sync local stream when the parent prop changes (e.g., host camera starts after mount)
+  useEffect(() => {
+    if (initialStream) {
+      localStreamRef.current = initialStream;
+      setLocalStream(initialStream);
+    }
+  }, [initialStream]);
+
+  // When the local stream becomes available after peers are already created,
+  // add the tracks to existing peers and re-negotiate
+  useEffect(() => {
+    if (!localStream || role === "viewer") return;
+    const peers = peersRef.current;
+    if (peers.size === 0) return;
+    for (const [userId, { peer }] of peers) {
+      // Replace senders with the new stream's tracks
+      for (const track of localStream.getTracks()) {
+        const sender = peer.getSenders?.().find((s) => s.track?.kind === track.kind);
+        if (sender) {
+          void sender.replaceTrack(track);
+        } else {
+          peer.addTrack(track, localStream);
+        }
+      }
+      // Re-negotiate to let the remote side know about the tracks
+      void peer.createOffer().then((offer) => {
+        return peer.setLocalDescription(offer).then(() => {
+          // Send the new offer via the channel
+          const channel = channelRef.current;
+          if (!channel) return;
+          return channel.send({
+            type: "broadcast",
+            event: "signal",
+            payload: { kind: "offer", fromId: sessionIdRef.current, toId: userId, description: offer },
+          });
+        });
+      }).catch(() => {});
+    }
+  }, [localStream, role]);
+
   const loadGuestRequests = useCallback(async () => {
     if (roleRef.current !== "host") return;
     const { data, error: resultError } = await supabase
